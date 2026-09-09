@@ -91,6 +91,19 @@ button:disabled { background: #9db4e0; cursor: wait; }
 
 .hidden { display: none !important; }
 
+.segmented { display: flex; flex: 1; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-btn {
+  flex: 1;
+  border-radius: 0;
+  background: #fff;
+  color: var(--muted);
+  padding: 6px 0;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.active { background: var(--accent); color: #fff; }
+
+input[readonly] { background: #eef1f5; color: var(--text); }
+
 #map { flex: 1; height: 100vh; }
 
 .leaflet-container { background: #dfe4ea; }

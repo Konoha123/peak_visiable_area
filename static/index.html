@@ -16,16 +16,29 @@
       <section class="card">
         <h2>观测点坐标</h2>
         <div class="row">
+          <label>输入方式</label>
+          <div class="segmented" id="input-mode">
+            <button type="button" class="seg-btn active" data-mode="text">文本框输入</button>
+            <button type="button" class="seg-btn" data-mode="map">地图点选</button>
+          </div>
+        </div>
+        <div class="row" id="fmt-row">
           <label for="fmt">格式</label>
           <select id="fmt">
             <option value="decimal" selected>十进制度（经度, 纬度）</option>
             <option value="dms">度分秒（带 N/S/E/W）</option>
           </select>
         </div>
-        <div class="row">
+        <div class="row" id="text-input-row">
           <input id="coord" type="text" placeholder="如 116.397, 39.909 或 116°23'50&quot;E 39°54'32&quot;N" spellcheck="false">
+        </div>
+        <div class="row hidden" id="pick-row">
+          <input id="picked-coord" type="text" readonly placeholder="（尚未点选）点击地图选择观测点" spellcheck="false">
+        </div>
+        <div class="row">
           <button id="confirm">确认输入</button>
         </div>
+        <p id="pick-hint" class="desc hidden">地图点选模式：点击地图采集观测点坐标（重新点选覆盖），再点击【确认输入】生效；按 Esc 退出。</p>
         <p id="feedback" class="feedback"></p>
       </section>
 

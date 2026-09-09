@@ -3,6 +3,8 @@
 
 const state = {
   observer: null,          // {lon, lat, elevation, radius}
+  inputMode: "text",       // 'text' | 'map'（坐标输入方式，校验逻辑由其决定）
+  picked: null,            // {lon, lat} 地图点选采集的观测点坐标
   map: null,
   tileLayer: null,
   overlayGroup: null,      // 曲率圆 + 可视域 + 观测点标记
@@ -123,6 +125,41 @@ function radiusBounds(lat, lon, radiusM) {
   return [L.latLng(lat - dLat, lon - dLon), L.latLng(lat + dLat, lon + dLon)];
 }
 
+/* ---------------- 输入模式切换（文本框输入 / 地图点选） ---------------- */
+
+function setInputMode(mode) {
+  if (state.inputMode === mode) return;
+  const leavingPick = state.inputMode === "map";
+  state.inputMode = mode;
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  const isText = mode === "text";
+  $("fmt-row").classList.toggle("hidden", !isText);
+  $("text-input-row").classList.toggle("hidden", !isText);
+  $("pick-row").classList.toggle("hidden", isText);
+  $("pick-hint").classList.toggle("hidden", isText);
+  if (leavingPick) {
+    // 退出点选模式：按当前观测点恢复平移/缩放约束
+    if (state.observer) applyZoomConstraints();
+    else { state.map.setMinZoom(2); state.map.setMaxZoom(18); state.map.setMaxBounds(null); }
+    showFeedback("", true);
+  } else {
+    // 进入点选模式：临时解除平移/缩放约束
+    state.map.setMaxBounds(null);
+  }
+}
+
+function onSegBtnClick(e) {
+  const btn = e.currentTarget;
+  if (btn.classList.contains("active")) return;
+  setInputMode(btn.dataset.mode);
+}
+
+function normalizeLon(lon) {
+  return ((lon + 180) % 360 + 360) % 360 - 180;
+}
+
 /* ---------------- 观测点确认流程 ---------------- */
 
 function showFeedback(msg, ok) {
@@ -135,8 +172,21 @@ async function onConfirm() {
   const btn = $("confirm");
   btn.disabled = true;
   try {
-    const v = await api("/api/validate",
-      { text: $("coord").value.trim(), format: $("fmt").value });
+    let payload;
+    if (state.inputMode === "map") {
+      if (!state.picked) {
+        showFeedback("请先在地图上点选观测点坐标", false);
+        return;
+      }
+      // 点选坐标天然合法：仍以十进制度走统一校验入口，预期直接“校验成功”
+      payload = {
+        text: `${state.picked.lon.toFixed(6)}, ${state.picked.lat.toFixed(6)}`,
+        format: "decimal",
+      };
+    } else {
+      payload = { text: $("coord").value.trim(), format: $("fmt").value };
+    }
+    const v = await api("/api/validate", payload);
     if (!v.ok) {
       showFeedback(v.message, false);
       return;
@@ -183,7 +233,8 @@ async function loadObserver(lon, lat) {
       .bindTooltip(`观测点 ${fmtCoord(lon, lat)}`).addTo(state.overlayGroup);
 
     state.map.fitBounds(radiusBounds(lat, lon, hz.display_radius_m));
-    applyZoomConstraints();
+    // 地图点选模式期间保持解除约束（退出该模式时再按当前观测点恢复）
+    if (state.inputMode !== "map") applyZoomConstraints();
 
     const fb = hz.fallback
       ? `校验成功。地平线半径过小，已兜底为 ${MIN_DISPLAY_M / 1000} km`
@@ -213,6 +264,15 @@ function resetLiftPanel() {
 }
 
 async function onMapClick(e) {
+  if (state.inputMode === "map") {
+    // 地图点选模式：点击即采集观测点坐标（覆盖旧值），点选测高暂不可用
+    const lon = normalizeLon(e.latlng.lng);
+    const lat = Math.max(-90, Math.min(90, e.latlng.lat));
+    state.picked = { lon, lat };
+    $("picked-coord").value = `${lon.toFixed(6)}, ${lat.toFixed(6)}`;
+    showFeedback(`已点选观测点：${fmtCoord(lon, lat)}，点击【确认输入】生效`, true);
+    return;
+  }
   if (!state.observer) {
     $("lift-hint").innerHTML = "请先在左侧确认观测点，再点击地图查询。";
     return;
@@ -274,6 +334,12 @@ async function loadOptions() {
 function bindEvents() {
   $("confirm").addEventListener("click", onConfirm);
   $("coord").addEventListener("keydown", (e) => { if (e.key === "Enter") onConfirm(); });
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", onSegBtnClick);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.inputMode === "map") setInputMode("text");
+  });
 
   $("engine").addEventListener("change", async () => {
     const engines = await api("/api/engines");

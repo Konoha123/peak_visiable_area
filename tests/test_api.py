@@ -67,6 +67,27 @@ class TestValidate:
         assert resp.status_code == 200
         assert resp.json()["ok"] is False
 
+    def test_empty_text_invalid(self, client: TestClient) -> None:
+        resp = client.post("/api/validate", json={"text": "   ", "format": "decimal"})
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is False
+
+    def test_picked_coordinate_style_decimal(self, client: TestClient) -> None:
+        # 地图点选模式的确认路径：只读框的六位小数十进制度字符串应直接校验通过
+        resp = client.post("/api/validate",
+                           json={"text": "138.727400, 35.360600", "format": "decimal"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["lon"] == pytest.approx(138.7274)
+        assert body["lat"] == pytest.approx(35.3606)
+
+    def test_picked_style_wrapped_longitude(self, client: TestClient) -> None:
+        # 前端点选经度归一化后的跨日期变更线坐标（西经区间）
+        resp = client.post("/api/validate",
+                           json={"text": "-179.500000, 65.123456", "format": "decimal"})
+        assert resp.json()["ok"] is True
+
 
 class TestHorizon:
     def test_peak_horizon(self, peak_client: TestClient) -> None:
