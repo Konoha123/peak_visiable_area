@@ -35,7 +35,8 @@ def make_synthetic_fetch(call_log: list[tuple[int, int, int]]):
         z, x, y = int(parts[-3]), int(parts[-2]), int(parts[-1].split(".")[0])
         call_log.append((z, x, y))
         gy, gx = np.mgrid[0:256, 0:256]
-        img = encode_terrarium(synthetic_elev(x * 256 + gx, y * 256 + gy))
+        # 取值锚定像素中心（连续场），与均匀纬度重采样的插值语义一致
+        img = encode_terrarium(synthetic_elev(x * 256 + gx + 0.5, y * 256 + gy + 0.5))
         buf = io.BytesIO()
         Image.fromarray(img).save(buf, format="PNG")
         return buf.getvalue()
@@ -70,24 +71,24 @@ class TestTerrarium:
         assert provider._select_zoom(41.0, 90.0) == 10
 
     def test_fetch_bbox_values_and_stitch(self, provider: TerrariumProvider, log: list) -> None:
+        from app.geo.dem import _tile_lat
+
         grid = provider.fetch_bbox(10.0, 40.0, 12.0, 42.0, 3000.0)
         assert grid.source == "aws-terrain-tiles"
         z = provider._select_zoom(41.0, 3000.0)
-        assert grid.shape[0] == ((grid.shape[0] + 255) // 256) * 256  # 按瓦片行拼接
         dlon = 360.0 / (2**z * 256)
-        # 在格网内随机取像素中心，验证拼接与解码自洽
+        x0, x1 = min(t[1] for t in log), max(t[1] for t in log)
+        y0, y1 = min(t[2] for t in log), max(t[2] for t in log)
+        # 在拼贴范围内随机取瓦片像素中心（墨卡托坐标），
+        # 高程场对 gx/gy 线性 → 解码/拼接/重采样/采样全链路应精确还原
         rng = np.random.default_rng(42)
-        rows = rng.integers(1, grid.shape[0] - 1, size=50)
-        cols = rng.integers(1, grid.shape[1] - 1, size=50)
-        vals = grid.elevations[rows, cols]
-        x0 = min(t[1] for t in log)
-        y0 = min(t[2] for t in log)
-        gxs, gys = x0 * 256 + cols, y0 * 256 + rows
-        assert np.allclose(vals, synthetic_elev(gxs, gys), atol=0.05)
-        # 采样经纬度（由格网自描述构造）应取到同一像素值
-        lons = grid.lon_min + (cols + 0.5) * grid.dlon
-        lats = grid.lat_max - (rows + 0.5) * grid.dlat
-        assert np.allclose(grid.sample(lons, lats), vals, atol=0.01)
+        gxs = rng.integers(x0 * 256 + 2, (x1 + 1) * 256 - 2, size=60)
+        gys = rng.integers(y0 * 256 + 2, (y1 + 1) * 256 - 2, size=60)
+        lons = -180.0 + (gxs + 0.5) * dlon
+        lats = np.array([_tile_lat((gy + 0.5) / 256.0, z) for gy in gys])
+        vals = grid.sample(lons, lats)
+        assert np.allclose(vals, synthetic_elev(gxs + 0.5, gys + 0.5), atol=0.05)
+        assert grid.lat_max == pytest.approx(_tile_lat(y0, z))
         assert grid.dlon == pytest.approx(dlon)
 
     def test_cache_prevents_refetch(self, provider: TerrariumProvider, log: list) -> None:

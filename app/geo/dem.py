@@ -183,15 +183,26 @@ class TerrariumProvider:
         tiles = [(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)]
 
         arrays = self._load_tiles(tiles, z)
-        mosaic = np.vstack([np.hstack([arrays[(x, y)] for x in range(x0, x1 + 1)])
-                            for y in range(y0, y1 + 1)])
-        grid_lon_min, grid_lat_max = _tile_lon(x0, z), _tile_lat(y0, z)
-        dlon = 360.0 / (n * 256)
-        dlat = (grid_lat_max - _tile_lat(y1 + 1, z)) / ((y1 - y0 + 1) * 256)
+        merc = np.vstack([np.hstack([arrays[(x, y)] for x in range(x0, x1 + 1)])
+                          for y in range(y0, y1 + 1)])
+        # 墨卡托行距随纬度变化：重采样为均匀纬度行（ElevationGrid 合同要求）
+        nrows = merc.shape[0]
+        north = _tile_lat(y0, z)
+        south = _tile_lat(y1 + 1, z)
+        dlat_u = (north - south) / nrows
+        lat_centers = north - (np.arange(nrows) + 0.5) * dlat_u
+        merc_y = ((1.0 - np.arcsinh(np.tan(np.radians(lat_centers))) / np.pi)
+                  / 2.0 * (2 ** z) * 256.0)
+        # 像素值锚定其中心（行 r 代表 merc 坐标 r+0.5 处的场值）
+        frac = merc_y - y0 * 256.0 - 0.5
+        r0 = np.clip(np.floor(frac).astype(np.int64), 0, nrows - 2)
+        w = np.clip(frac - r0, 0.0, 1.0)[:, None]
+        uniform = (merc[r0, :] * (1.0 - w) + merc[r0 + 1, :] * w).astype(np.float32)
+        dlon = 360.0 / (2 ** z * 256)
         return ElevationGrid(
-            elevations=mosaic.astype(np.float32),
-            lon_min=grid_lon_min, lat_max=grid_lat_max,
-            dlon=dlon, dlat=dlat, source=self.name,
+            elevations=uniform,
+            lon_min=_tile_lon(x0, z), lat_max=north,
+            dlon=dlon, dlat=dlat_u, source=self.name,
         )
 
     def _load_tiles(
