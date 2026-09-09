@@ -93,6 +93,51 @@ def list_dem_sources() -> list[dict]:
     return DEM_SOURCES
 
 
+class BasemapRequest(BaseModel):
+    path: str
+
+
+@router.post("/basemap")
+def basemap(req: BasemapRequest) -> dict:
+    """离线底图：读取 GeoTIFF 渲染为叠加图像。"""
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    from ..geo.dem import GeoTIFFProvider
+
+    try:
+        grid = GeoTIFFProvider(path=req.path).fetch_bbox(-180, -90, 180, 90, 90.0)
+    except DEMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    arr = grid.elevations.astype(np.float64)
+    valid = np.isfinite(arr)
+    scale = max(1, int(np.ceil(max(arr.shape) / 2048)))
+    kept = (arr.shape[0] // scale * scale, arr.shape[1] // scale * scale)
+    arr_s = arr[:kept[0]:scale, :kept[1]:scale]
+    valid_s = valid[:kept[0]:scale, :kept[1]:scale]
+
+    lo, hi = np.nanpercentile(arr_s[valid_s], [2, 98]) if valid_s.any() else (0.0, 1.0)
+    t = np.clip((arr_s - lo) / max(hi - lo, 1e-6), 0, 1)
+    rgba = np.zeros((*t.shape, 4), dtype=np.uint8)
+    rgba[..., 0] = (40 + t * 200).astype(np.uint8)
+    rgba[..., 1] = (90 + t * 110).astype(np.uint8)
+    rgba[..., 2] = (150 - t * 100).astype(np.uint8)
+    rgba[..., 3] = np.where(valid_s, 255, 0).astype(np.uint8)
+
+    buf = io.BytesIO()
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG")
+    data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    west = grid.lon_min
+    east = grid.lon_min + grid.dlon * kept[1]
+    north = grid.lat_max
+    south = grid.lat_max - grid.dlat * kept[0]
+    return {"image": data_uri, "bounds": [west, south, east, north]}
+
+
 @router.post("/validate")
 def validate_coords(req: ValidateRequest) -> dict:
     res = parse_coordinates(req.text, req.format)

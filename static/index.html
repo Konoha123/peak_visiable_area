@@ -2,10 +2,101 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>Peak Visible Area</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>山峰可视域计算</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        onerror="this.href='/static/vendor/leaflet/leaflet.css'">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>Peak Visible Area</h1>
-  <p>界面建设中（脚手架占位页）。</p>
+  <div id="layout">
+    <aside id="sidebar">
+      <h1>山峰可视域计算</h1>
+
+      <section class="card">
+        <h2>观测点坐标</h2>
+        <div class="row">
+          <label for="fmt">格式</label>
+          <select id="fmt">
+            <option value="decimal" selected>十进制度（经度, 纬度）</option>
+            <option value="dms">度分秒（带 N/S/E/W）</option>
+          </select>
+        </div>
+        <div class="row">
+          <input id="coord" type="text" placeholder="如 116.397, 39.909 或 116°23'50&quot;E 39°54'32&quot;N" spellcheck="false">
+          <button id="confirm">确认输入</button>
+        </div>
+        <p id="feedback" class="feedback"></p>
+      </section>
+
+      <section class="card">
+        <h2>设置</h2>
+        <div class="row">
+          <label for="refraction">地球半径模型</label>
+          <select id="refraction">
+            <option value="geometric" selected>纯几何 R</option>
+            <option value="standard">标准大气折射（≈7/6 R）</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="unit">高度单位</label>
+          <select id="unit">
+            <option value="m" selected>米 (m)</option>
+            <option value="ft">英尺 (ft)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="basemap">底图来源</label>
+          <select id="basemap">
+            <option value="online" selected>在线瓦片</option>
+            <option value="offline">离线文件（GeoTIFF）</option>
+          </select>
+        </div>
+        <div class="row hidden" id="basemap-file-row">
+          <input id="basemap-file" type="text" placeholder="服务器上的 GeoTIFF 底图路径">
+          <button id="basemap-apply">加载</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <details>
+          <summary><h2>高级设置</h2></summary>
+          <div class="row">
+            <label for="dem">DEM 数据源</label>
+            <select id="dem"></select>
+          </div>
+          <p id="dem-desc" class="desc"></p>
+          <div class="row hidden" id="dem-file-row">
+            <input id="dem-file" type="text" placeholder="服务器上的 GeoTIFF 高程文件路径">
+          </div>
+          <div class="row">
+            <label for="engine">Viewshed 引擎</label>
+            <select id="engine"></select>
+          </div>
+          <p id="engine-desc" class="desc"></p>
+        </details>
+      </section>
+
+      <section class="card" id="result-card">
+        <h2>点选测高</h2>
+        <p id="lift-hint" class="hint">先确认观测点，然后点击地图任意位置：<br>将显示该点为看见观测点所需的最小抬升高度。</p>
+        <div id="lift-result" class="lift-result hidden">
+          <div class="kv"><span>点击位置</span><b id="click-pos"></b></div>
+          <div class="kv"><span>点击点地面高程</span><b id="click-elev"></b></div>
+          <div class="kv"><span>两点距离</span><b id="click-dist"></b></div>
+          <div class="kv"><span>最小抬升高度</span><b id="lift-value" class="lift-value"></b></div>
+        </div>
+      </section>
+
+      <p id="obs-info" class="obs-info"></p>
+      <p id="busy" class="busy hidden">计算中…</p>
+    </aside>
+
+    <main id="map"></main>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          onerror="var s=document.createElement('script');s.src='/static/vendor/leaflet/leaflet.js';document.head.appendChild(s);"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
