@@ -29,8 +29,10 @@ def test_nonpositive_elevation(elev: float) -> None:
 
 
 def test_fallback_to_min_display_radius() -> None:
-    radius, fallback = display_radius_m(10.0, "geometric")
+    # 1 m 高程对应地平线约 3.57 km < 5 km，触发兜底
+    radius, fallback = display_radius_m(1.0, "geometric")
     assert radius == 5000.0 and fallback is True
+    assert horizon_radius_m(1.0, "geometric") == pytest.approx(3569.4, rel=1e-4)
     radius, fallback = display_radius_m(0.0, "geometric")
     assert radius == 5000.0 and fallback is True
 
