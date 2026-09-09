@@ -12,6 +12,7 @@ from ..geo.coords import parse_coordinates
 from ..geo.dem import DEMError, build_provider
 from ..geo.horizon import MIN_DISPLAY_RADIUS_M, display_radius_m, horizon_radius_m
 from ..geo.lift import IMPOSSIBLE_MESSAGE, solve_min_lift
+from ..geo.seamask import apply_sea_level_clamp
 from ..geo.viewshed import compute_viewshed
 from ..geo.viewshed_gdal import compute_viewshed_gdal
 from ..render import viewshed_to_overlay
@@ -158,6 +159,7 @@ def horizon(req: HorizonRequest) -> dict:
     try:
         grid = provider.fetch_bbox(req.lon - dlon, req.lat - dlat, req.lon + dlon, req.lat + dlat,
                                    NEAR_CELL_M)
+        grid = apply_sea_level_clamp(grid)
         elev = grid.sample(req.lon, req.lat)
         if elev is None or math.isnan(float(elev)):
             raise DEMError("观测点处无 DEM 高程数据")
@@ -190,7 +192,7 @@ def _fetch_analysis_grid(req_lon: float, req_lat: float, radius_m: float, dem_so
     dlon = radius_m / (111_320.0 * math.cos(math.radians(req_lat)))
     grid = provider.fetch_bbox(req_lon - dlon, req_lat - dlat, req_lon + dlon, req_lat + dlat,
                                _analysis_cell_m(radius_m))
-    return provider, grid
+    return provider, apply_sea_level_clamp(grid)
 
 
 @router.post("/viewshed")
@@ -235,6 +237,7 @@ def lift(req: LiftRequest) -> dict:
     try:
         grid = provider.fetch_bbox(lon_min - dlon_m, lat_min - dlat_m,
                                    lon_max + dlon_m, lat_max + dlat_m, NEAR_CELL_M)
+        grid = apply_sea_level_clamp(grid)
         res = solve_min_lift(grid, req.obs_lon, req.obs_lat, req.click_lon, req.click_lat,
                              req.refraction)
     except DEMError as exc:
