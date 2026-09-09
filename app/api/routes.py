@@ -26,7 +26,8 @@ ENGINES = [
     {
         "id": "gdal-viewshed",
         "name": "GDAL Viewshed",
-        "description": "调用 GDAL 内置可视域算法，可作为自研引擎结果的交叉校验（需 GDAL 环境）。",
+        "description": "调用 GDAL 官方 gdal_viewshed 工具（曲率已预烘焙），"
+                       "可作自研引擎的交叉校验；复杂地形下结果可能偏保守，耗时略长。",
     },
 ]
 
