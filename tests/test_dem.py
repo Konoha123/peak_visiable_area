@@ -69,7 +69,7 @@ class TestTerrarium:
         # lat=41 时每度约 84000 m：target 90 m -> z=10（mpp≈115 m 最近）
         assert provider._select_zoom(41.0, 90.0) == 10
 
-    def test_fetch_bbox_values_and_stitch(self, provider: TerrariumProvider) -> None:
+    def test_fetch_bbox_values_and_stitch(self, provider: TerrariumProvider, log: list) -> None:
         grid = provider.fetch_bbox(10.0, 40.0, 12.0, 42.0, 3000.0)
         assert grid.source == "aws-terrain-tiles"
         z = provider._select_zoom(41.0, 3000.0)
