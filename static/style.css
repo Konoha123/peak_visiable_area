@@ -104,6 +104,23 @@ button:disabled { background: #9db4e0; cursor: wait; }
 
 input[readonly] { background: #eef1f5; color: var(--text); }
 
+.phase-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.phase-badge { font-size: 13px; font-weight: 600; }
+.phase-badge::before { content: "●"; margin-right: 6px; }
+.phase-badge.picking { color: #b45309; }
+.phase-badge.ready { color: var(--ok); }
+.phase-badge.unset { color: var(--muted); }
+.phase-bar button { margin-left: auto; }
+
 #map { flex: 1; height: 100vh; }
 
 .leaflet-container { background: #dfe4ea; }

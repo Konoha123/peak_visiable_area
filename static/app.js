@@ -127,8 +127,29 @@ function radiusBounds(lat, lon, radiusM) {
 
 /* ---------------- 输入模式切换（文本框输入 / 地图点选） ---------------- */
 
-function setInputMode(mode) {
-  if (state.inputMode === mode) return;
+function updatePhaseBar() {
+  const badge = $("phase-badge");
+  const toggle = $("phase-toggle");
+  if (state.inputMode === "map") {
+    badge.textContent = "选点中";
+    badge.className = "phase-badge picking";
+    toggle.textContent = "退出选点";
+  } else if (state.observer) {
+    badge.textContent = "可测高";
+    badge.className = "phase-badge ready";
+    toggle.textContent = "进入地图选点";
+  } else {
+    badge.textContent = "未设定观测点";
+    badge.className = "phase-badge unset";
+    toggle.textContent = "进入地图选点";
+  }
+}
+
+function setInputMode(mode, options = {}) {
+  if (state.inputMode === mode) {
+    updatePhaseBar();
+    return;
+  }
   const leavingPick = state.inputMode === "map";
   state.inputMode = mode;
   document.querySelectorAll(".seg-btn").forEach((btn) => {
@@ -143,17 +164,25 @@ function setInputMode(mode) {
     // 退出点选模式：按当前观测点恢复平移/缩放约束
     if (state.observer) applyZoomConstraints();
     else { state.map.setMinZoom(2); state.map.setMaxZoom(18); state.map.setMaxBounds(null); }
-    showFeedback("", true);
+    if (options.clearFeedback !== false) showFeedback("", true);
   } else {
     // 进入点选模式：临时解除平移/缩放约束
     state.map.setMaxBounds(null);
   }
+  updatePhaseBar();
 }
 
 function onSegBtnClick(e) {
   const btn = e.currentTarget;
   if (btn.classList.contains("active")) return;
   setInputMode(btn.dataset.mode);
+}
+
+/** 点选确认成功后的自动退出：清空点选状态并切回文本框输入模式（保留成功反馈）。 */
+function exitPickAfterConfirm() {
+  state.picked = null;
+  $("picked-coord").value = "";
+  setInputMode("text", { clearFeedback: false });
 }
 
 function normalizeLon(lon) {
@@ -193,6 +222,10 @@ async function onConfirm() {
     }
     showFeedback("校验成功，正在计算可视域…", true);
     await loadObserver(v.lon, v.lat);
+    if (state.inputMode === "map" && state.observer) {
+      // 确认生效后自动切回文本框输入模式，并清空点选状态
+      exitPickAfterConfirm();
+    }
   } catch (err) {
     showFeedback(err.message, false);
   } finally {
@@ -247,9 +280,11 @@ async function loadObserver(lon, lat) {
       (hz.fallback ? "（最小显示半径兜底）" : "") + `<br>` +
       `可视域：${vs.visible_cells.toLocaleString("en-US")} 格可见 / ` +
       `格网 ${vs.grid_shape.join("×")}，引擎 ${vs.engine}，耗时 ${vs.elapsed_s}s`;
+    updatePhaseBar();
   } catch (err) {
     state.observer = null;
     showFeedback(err.message, false);
+    updatePhaseBar();
   } finally {
     setBusy(false);
   }
@@ -340,6 +375,9 @@ function bindEvents() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && state.inputMode === "map") setInputMode("text");
   });
+  $("phase-toggle").addEventListener("click", () => {
+    setInputMode(state.inputMode === "map" ? "text" : "map");
+  });
 
   $("engine").addEventListener("change", async () => {
     const engines = await api("/api/engines");
@@ -388,6 +426,46 @@ function waitForLeaflet(timeoutMs = 5000) {
   });
 }
 
+/** 轻量页面自检（?selftest=1）：验证输入模式切换/阶段指示/自动退出链路，结果写入 DOM。 */
+async function runSelfTest() {
+  const results = [];
+  const check = (name, cond) => results.push(`${cond ? "PASS" : "FAIL"} ${name}`);
+  const segActive = (mode) =>
+    document.querySelector(`.seg-btn[data-mode="${mode}"]`).classList.contains("active");
+
+  check("初始阶段=未设定观测点", $("phase-badge").textContent === "未设定观测点");
+  check("初始按钮=进入地图选点", $("phase-toggle").textContent === "进入地图选点");
+
+  $("phase-toggle").click();
+  check("切换后阶段=选点中", $("phase-badge").textContent === "选点中");
+  check("按钮=退出选点", $("phase-toggle").textContent === "退出选点");
+  check("分段控件联动=地图点选激活", segActive("map"));
+  check("只读坐标框可见", !$("pick-row").classList.contains("hidden"));
+  check("文本输入框隐藏", $("text-input-row").classList.contains("hidden"));
+
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  check("Esc 后阶段=未设定观测点", $("phase-badge").textContent === "未设定观测点");
+  check("Esc 后分段=文本框激活", segActive("text"));
+  check("Esc 后只读框隐藏", $("pick-row").classList.contains("hidden"));
+
+  $("phase-toggle").click();
+  state.picked = { lon: 116.397, lat: 39.909 };
+  $("picked-coord").value = "116.397000, 39.909000";
+  state.observer = { lon: 116.397, lat: 39.909, elevation: 50, radius: 25240 };
+  exitPickAfterConfirm();
+  check("确认后自动退出=可测高", $("phase-badge").textContent === "可测高");
+  check("点选状态已清空", state.picked === null && $("picked-coord").value === "");
+  check("确认后分段=文本框激活", segActive("text"));
+  check("确认后按钮=进入地图选点", $("phase-toggle").textContent === "进入地图选点");
+
+  state.observer = null;
+  updatePhaseBar();
+  const pre = document.createElement("pre");
+  pre.id = "selftest-results";
+  pre.textContent = results.join("\n");
+  document.body.appendChild(pre);
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   // CDN 失败时，index.html 的 onerror 会补挂本地 Leaflet；此处等待其就绪
   await waitForLeaflet();
@@ -395,6 +473,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadOptions();
     bindEvents();
+    updatePhaseBar();
+    if (new URLSearchParams(location.search).has("selftest")) await runSelfTest();
   } catch (err) {
     showFeedback(`初始化失败：${err.message}`, false);
   }
