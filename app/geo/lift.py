@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 
@@ -15,6 +16,8 @@ import numpy as np
 
 from .dem import DEMError, ElevationGrid
 from .horizon import EARTH_RADIUS_M, effective_earth_radius_m
+
+logger = logging.getLogger(__name__)
 
 IMPOSSIBLE_MESSAGE = "无法通过抬升实现通视（地球几何约束）"
 
@@ -66,6 +69,8 @@ def solve_min_lift(
 ) -> LiftResult:
     omega = _central_angle_rad(obs_lon, obs_lat, click_lon, click_lat)
     if omega >= math.pi / 2 - 1e-12:
+        logger.info("测高: 地心角=%.2f° ≥ 90°，几何不可行（兜底字符串）",
+                    math.degrees(omega))
         return LiftResult(
             feasible=False, lift_m=None,
             observer_elev=float("nan"), clicked_elev=float("nan"),
@@ -84,6 +89,12 @@ def solve_min_lift(
 
     lift = _solve_from_profile(np.asarray(d, dtype=np.float64),
                                np.asarray(elev, dtype=np.float64), r_eff)
+    logger.info(
+        "测高: 距离=%.1fm 采样=%d 点(步长 %.0fm) 折射=%s → 可行=%s 抬升=%.1fm "
+        "(观测点高程=%.1fm 点击点高程=%.1fm)",
+        float(d[-1]), len(d), spacing, refraction, True, lift,
+        float(elev[0]), float(elev[-1]),
+    )
     return LiftResult(
         feasible=True, lift_m=lift,
         observer_elev=float(elev[0]), clicked_elev=float(elev[-1]),

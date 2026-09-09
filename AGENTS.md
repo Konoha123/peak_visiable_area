@@ -70,3 +70,4 @@
   - GDAL 3.13 实测缺陷：绑定 `ViewshedGenerate` 位置参数错位、`gdal_viewshed` 的 `-cc` 曲率系数失效、`-md` 误杀近距离格点；GDAL 引擎采用“子进程 + 曲率预烘焙 + 自管半径”绕开，复杂地形下结果可能偏保守。
   - 点选测高的抬升高度含地球凸起项：平地等高两点 D km 距离需约 D²/(2R) 的基准抬升属正常物理结果。
   - 前端无构建/无 JS 测试框架约束下，提供页面自检模式：访问 `/?selftest=1` 会驱动输入模式切换/阶段指示/自动退出链路并将 PASS/FAIL 写入 DOM（`#selftest-results`），可用无头浏览器 dump-dom 校验。
+  - 调试日志：后端用标准 logging（`app.*` 命名空间，INFO=请求/计算摘要，DEBUG=缓存命中等细节，WARNING=DEM 获取/计算失败）；前端统一 `[pva]` 前缀 console.log（关键错误用 console.warn）。

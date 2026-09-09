@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import io
+import logging
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import requests
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 EARTH_CIRCUMFERENCE_M = 40_075_016.686
 TERRARIUM_MAX_ZOOM = 15
@@ -181,8 +185,14 @@ class TerrariumProvider:
         y0 = max(0, min(n - 1, int(math.floor(_tile_y(lat_max_c, z)))))
         y1 = max(0, min(n - 1, int(math.floor(_tile_y(lat_min_c, z)))))
         tiles = [(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)]
-
+        logger.info(
+            "DEM[%s] 获取: bbox=(%.4f, %.4f, %.4f, %.4f) target=%.0fm → z=%d 瓦片数=%d",
+            self.name, lon_min, lat_min, lon_max, lat_max, target_cell_m, z, len(tiles),
+        )
+        t0 = time.perf_counter()
         arrays = self._load_tiles(tiles, z)
+        logger.info("DEM[%s] 瓦片加载完成: %d 块, 耗时 %.2fs", self.name, len(arrays),
+                    time.perf_counter() - t0)
         merc = np.vstack([np.hstack([arrays[(x, y)] for x in range(x0, x1 + 1)])
                           for y in range(y0, y1 + 1)])
         # 墨卡托行距随纬度变化：重采样为均匀纬度行（ElevationGrid 合同要求）
@@ -212,6 +222,7 @@ class TerrariumProvider:
             x, y = xy
             cache_file = self.cache_dir / str(z) / str(x) / f"{y}.png"  # type: ignore[union-attr]
             if cache_file.exists():
+                logger.debug("DEM[%s] 命中缓存: z=%d x=%d y=%d", self.name, z, x, y)
                 return xy, _decode_terrarium(cache_file.read_bytes())
             url = self.url_template.format(z=z, x=x, y=y)
             try:
@@ -220,6 +231,7 @@ class TerrariumProvider:
                 else:
                     data = _default_fetch(url, self.timeout)
             except Exception as exc:  # noqa: BLE001
+                logger.warning("DEM[%s] 瓦片获取失败: %s", self.name, url)
                 raise DEMError(f"DEM 在线获取失败（{url}）：{exc}") from exc
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             cache_file.write_bytes(data)
@@ -260,6 +272,8 @@ class GeoTIFFProvider:
 
         band = ds.GetRasterBand(1)
         w, h = ds.RasterXSize, ds.RasterYSize
+        logger.info("DEM[%s] GeoTIFF 读取: path=%s 请求窗口=(%.4f, %.4f, %.4f, %.4f)",
+                    self.name, self.path, lon_min, lat_min, lon_max, lat_max)
         c0 = max(0, int(math.floor((lon_min - gt[0]) / gt[1])))
         c1 = min(w, int(math.ceil((lon_max - gt[0]) / gt[1])))
         r0 = max(0, int(math.floor((gt[3] - lat_max) / (-gt[5]))))

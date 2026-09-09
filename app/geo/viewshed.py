@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ import numpy as np
 
 from .dem import DEMError, ElevationGrid
 from .horizon import effective_earth_radius_m
+
+logger = logging.getLogger(__name__)
 
 M_PER_DEG_LAT = 111_320.0
 MAX_PROFILE_SAMPLES = 4000
@@ -136,6 +139,13 @@ def compute_viewshed(
     if grid.nodata_mask is not None:
         vis &= ~grid.nodata_mask
 
+    logger.info(
+        "Viewshed[%s]: 观测点(%.5f, %.5f) h=%.1fm 半径=%.1fkm 折射=%s 格网=%dx%d cell=%.1fm "
+        "射线=%d 步长=%.0fm → 可见=%d 耗时=%.2fs",
+        ENGINE_NAME, obs_lon, obs_lat, h_obs, max_radius_m / 1000, refraction,
+        grid.shape[0], grid.shape[1], cell, n_rays, step, int(vis.sum()),
+        time.perf_counter() - t0,
+    )
     return ViewshedResult(
         visibility=vis, grid=grid,
         observer_lon=obs_lon, observer_lat=obs_lat, observer_elev=float(h_obs),

@@ -13,6 +13,8 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const log = (...args) => console.log("[pva]", ...args);
+const warn = (...args) => console.warn("[pva]", ...args);
 const FT_PER_M = 3.280839895;
 const MIN_DISPLAY_M = 5000;
 
@@ -22,13 +24,20 @@ function setBusy(on) {
 }
 
 async function api(path, body) {
+  const t0 = performance.now();
+  log("→", body ? "POST" : "GET", path, body ?? "");
   const resp = await fetch(path, {
     method: body ? "POST" : "GET",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || `请求失败（HTTP ${resp.status}）`);
+  if (!resp.ok) {
+    warn("←", path, `HTTP ${resp.status} (${(performance.now() - t0).toFixed(0)}ms)`,
+         data.detail || "");
+    throw new Error(data.detail || `请求失败（HTTP ${resp.status}）`);
+  }
+  log("←", path, `+${(performance.now() - t0).toFixed(0)}ms`);
   return data;
 }
 
@@ -146,10 +155,12 @@ function updatePhaseBar() {
 }
 
 function setInputMode(mode, options = {}) {
+  const prevMode = state.inputMode;
   if (state.inputMode === mode) {
     updatePhaseBar();
     return;
   }
+  log(`输入模式切换: ${prevMode} → ${mode}`);
   const leavingPick = state.inputMode === "map";
   state.inputMode = mode;
   document.querySelectorAll(".seg-btn").forEach((btn) => {
@@ -220,6 +231,7 @@ async function onConfirm() {
       showFeedback(v.message, false);
       return;
     }
+    log("校验通过:", v.lon, v.lat, `模式=${state.inputMode}`);
     showFeedback("校验成功，正在计算可视域…", true);
     await loadObserver(v.lon, v.lat);
     if (state.inputMode === "map" && state.observer) {
@@ -246,6 +258,8 @@ async function loadObserver(lon, lat) {
     const hz = await api("/api/horizon",
       { lon, lat, refraction: refraction(), dem_source: source });
     state.observer = { lon, lat, elevation: hz.elevation_m, radius: hz.display_radius_m };
+    log("地平线结果: 高程=%.1fm 半径=%.1fkm 兜底=%s DEM=%s",
+        hz.elevation_m, hz.display_radius_m / 1000, hz.fallback, hz.dem_source);
 
     const vs = await api("/api/viewshed", {
       lon, lat, refraction: refraction(), engine: $("engine").value,
@@ -268,6 +282,9 @@ async function loadObserver(lon, lat) {
     state.map.fitBounds(radiusBounds(lat, lon, hz.display_radius_m));
     // 地图点选模式期间保持解除约束（退出该模式时再按当前观测点恢复）
     if (state.inputMode !== "map") applyZoomConstraints();
+    log("可视域结果: 可见=%s 格网=%s 引擎=%s 耗时=%ss 图层=%dKB",
+        vs.visible_cells, vs.grid_shape.join("×"), vs.engine, vs.elapsed_s,
+        Math.round(vs.image.length / 1024));
 
     const fb = hz.fallback
       ? `校验成功。地平线半径过小，已兜底为 ${MIN_DISPLAY_M / 1000} km`
@@ -283,6 +300,7 @@ async function loadObserver(lon, lat) {
     updatePhaseBar();
   } catch (err) {
     state.observer = null;
+    warn("观测点加载失败:", err.message);
     showFeedback(err.message, false);
     updatePhaseBar();
   } finally {
@@ -305,6 +323,7 @@ async function onMapClick(e) {
     const lat = Math.max(-90, Math.min(90, e.latlng.lat));
     state.picked = { lon, lat };
     $("picked-coord").value = `${lon.toFixed(6)}, ${lat.toFixed(6)}`;
+    log("点选观测点:", lon.toFixed(6), lat.toFixed(6));
     showFeedback(`已点选观测点：${fmtCoord(lon, lat)}，点击【确认输入】生效`, true);
     return;
   }
@@ -338,7 +357,11 @@ async function onMapClick(e) {
     state.clickMarker = L.circleMarker([lat, lon],
       { radius: 5, color: "#2b2f36", weight: 2, fillOpacity: 0.6 })
       .bindTooltip(`点击点 ${fmtCoord(lon, lat)}`).addTo(state.map);
+    log("测高结果: 可行=%s 抬升=%s 距离=%.0fm",
+        data.feasible, data.lift_m !== null ? `${data.lift_m.toFixed(1)}m` : data.message,
+        data.distance_m);
   } catch (err) {
+    warn("测高查询失败:", err.message);
     $("lift-hint").classList.remove("hidden");
     $("lift-hint").textContent = err.message;
     $("lift-hint").classList.add("err");

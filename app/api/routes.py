@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +17,8 @@ from ..geo.viewshed_gdal import compute_viewshed_gdal
 from ..render import viewshed_to_overlay
 
 router = APIRouter(prefix="/api")
+
+logger = logging.getLogger(__name__)
 
 ENGINES = [
     {
@@ -142,6 +145,8 @@ def basemap(req: BasemapRequest) -> dict:
 @router.post("/validate")
 def validate_coords(req: ValidateRequest) -> dict:
     res = parse_coordinates(req.text, req.format)
+    logger.info("校验: format=%s text=%r → ok=%s lon=%s lat=%s",
+                req.format, req.text[:60], res.ok, res.lon, res.lat)
     return {"ok": res.ok, "lon": res.lon, "lat": res.lat, "message": res.message}
 
 
@@ -157,9 +162,12 @@ def horizon(req: HorizonRequest) -> dict:
         if elev is None or math.isnan(float(elev)):
             raise DEMError("观测点处无 DEM 高程数据")
     except DEMError as exc:
+        logger.warning("地平线计算失败(%s): %s", req.dem_source, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     radius, fallback = display_radius_m(float(elev), req.refraction)
+    logger.info("地平线: 观测点(%.5f, %.5f) 高程=%.1fm 折射=%s → 半径=%.1fkm 兜底=%s",
+                req.lon, req.lat, float(elev), req.refraction, radius / 1000, fallback)
     return {
         "elevation_m": float(elev),
         "horizon_radius_m": horizon_radius_m(float(elev), req.refraction),
@@ -187,13 +195,20 @@ def _fetch_analysis_grid(req_lon: float, req_lat: float, radius_m: float, dem_so
 
 @router.post("/viewshed")
 def viewshed(req: ViewshedRequest) -> dict:
+    logger.info("可视域请求: 观测点(%.5f, %.5f) 引擎=%s 半径=%.1fkm 折射=%s DEM=%s",
+                req.lon, req.lat, req.engine, req.radius_m / 1000, req.refraction,
+                req.dem_source)
     try:
         _, grid = _fetch_analysis_grid(req.lon, req.lat, req.radius_m, req.dem_source)
         compute = compute_viewshed if req.engine == "angular-ray-sweep" else compute_viewshed_gdal
         result = compute(grid, req.lon, req.lat, req.refraction, req.radius_m)
     except DEMError as exc:
+        logger.warning("可视域计算失败: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     data_uri, bounds = viewshed_to_overlay(result)
+    logger.info("可视域响应: 可见=%d 格网=%dx%d 图层=%dKB",
+                int(result.visibility.sum()), grid.shape[0], grid.shape[1],
+                len(data_uri) // 1024)
     return {
         "image": data_uri,
         "bounds": list(bounds),
@@ -223,7 +238,12 @@ def lift(req: LiftRequest) -> dict:
         res = solve_min_lift(grid, req.obs_lon, req.obs_lat, req.click_lon, req.click_lat,
                              req.refraction)
     except DEMError as exc:
+        logger.warning("测高失败: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    logger.info("测高响应: 可行=%s 抬升=%s 距离=%.1fm",
+                res.feasible,
+                f"{res.lift_m:.1f}m" if res.lift_m is not None else "N/A",
+                res.distance_m)
     return {
         "feasible": res.feasible,
         "lift_m": res.lift_m,
