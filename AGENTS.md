@@ -56,9 +56,9 @@
 
 ## 项目状态与约定
 
-- 当前仅完成项目基准文档（README.md、AGENTS.md）、交互流程约定与技术方案决策，**尚未进行任何代码层面的规划与开发**；方案层面已无待决项。
-- 后续如确定构建/测试/lint 命令，请更新本文件，例如：
-  - 构建：TBD
-  - 测试：TBD
-  - Lint：TBD
-- 新增依赖时须同步记录（如 requirements.txt / environment.yml，待定）。
+- 项目已进入开发阶段（脚手架与测试基建已建立，进度见 git 提交历史）；交互流程与技术方案基准见上文各节。
+- 常用命令（均在仓库根目录执行，先 `conda activate $(cat conda_env_name)`）：
+  - 运行：`uvicorn app.main:app --port 8000`（访问 http://127.0.0.1:8000）
+  - 测试：`pytest`
+  - Lint：`ruff check app tests`
+- 依赖记录：pip 部分见 `requirements.txt`，完整 conda 环境见 `environment.yml`（GDAL 必须经 conda 安装）；新增依赖时须同步更新这两个文件。
