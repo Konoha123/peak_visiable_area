@@ -56,9 +56,13 @@
 
 ## 项目状态与约定
 
-- 项目已进入开发阶段（脚手架与测试基建已建立，进度见 git 提交历史）；交互流程与技术方案基准见上文各节。
+- 项目已完成第一版开发（模块：`app/geo/*` 计算核心、`app/api/routes.py` 接口、`static/` 前端），进度见 git 提交历史；交互流程与技术方案基准见上文各节。
 - 常用命令（均在仓库根目录执行，先 `conda activate $(cat conda_env_name)`）：
   - 运行：`uvicorn app.main:app --port 8000`（访问 http://127.0.0.1:8000）
   - 测试：`pytest`
   - Lint：`ruff check app tests`
 - 依赖记录：pip 部分见 `requirements.txt`，完整 conda 环境见 `environment.yml`（GDAL 必须经 conda 安装）；新增依赖时须同步更新这两个文件。
+- 实现备注：
+  - DEM 在线源为 AWS Terrain Tiles（terrarium 编码），拼接后重采样为均匀纬度格网（墨卡托行距非均匀，直接线性配准在大范围会引入数公里偏差）。
+  - GDAL 3.13 实测缺陷：绑定 `ViewshedGenerate` 位置参数错位、`gdal_viewshed` 的 `-cc` 曲率系数失效、`-md` 误杀近距离格点；GDAL 引擎采用“子进程 + 曲率预烘焙 + 自管半径”绕开，复杂地形下结果可能偏保守。
+  - 点选测高的抬升高度含地球凸起项：平地等高两点 D km 距离需约 D²/(2R) 的基准抬升属正常物理结果。
