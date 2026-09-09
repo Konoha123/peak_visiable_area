@@ -4,11 +4,15 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes import router
+
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Peak Visible Area")
+
+    app.include_router(router)
 
     @app.get("/api/health")
     def health() -> dict:
