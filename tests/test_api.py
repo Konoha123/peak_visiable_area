@@ -185,7 +185,7 @@ class TestLift:
         idx = _decimated_indices(5000, MAX_PROFILE_POINTS)
         assert len(idx) <= MAX_PROFILE_POINTS + 1
         assert idx[0] == 0 and idx[-1] == 4999
-        assert all(b > a for a, b in zip(idx, idx[1:], strict=True))
+        assert all(idx[i + 1] > idx[i] for i in range(len(idx) - 1))
 
 
 def test_engine_and_source_lists(client: TestClient) -> None:
