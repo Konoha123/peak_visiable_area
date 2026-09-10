@@ -9,6 +9,8 @@ const state = {
   tileLayer: null,
   overlayGroup: null,      // 曲率圆 + 可视域 + 观测点标记
   clickMarker: null,
+  liftLine: null,          // 最近一次测高的测地线连线（仅保留最新一条）
+  lastLiftDisplay: null,   // 最近一次测高的剖面显示数据（单位切换时重绘用）
   busyCount: 0,
 };
 
@@ -17,6 +19,7 @@ const log = (...args) => console.log("[pva]", ...args);
 const warn = (...args) => console.warn("[pva]", ...args);
 const FT_PER_M = 3.280839895;
 const MIN_DISPLAY_M = 5000;
+const R_EARTH_M = 6371000;
 
 function setBusy(on) {
   state.busyCount = Math.max(0, state.busyCount + (on ? 1 : -1));
@@ -69,6 +72,11 @@ function demSourceConfig() {
 }
 
 function refraction() { return $("refraction").value; }
+
+/** 有效地球半径（与折射设置联动：纯几何 R / 标准大气折射 7/6 R）。 */
+function effEarthRadiusM() {
+  return refraction() === "standard" ? R_EARTH_M * 7 / 6 : R_EARTH_M;
+}
 
 /* ---------------- 地图 ---------------- */
 
@@ -313,7 +321,120 @@ async function loadObserver(lon, lat) {
 function resetLiftPanel() {
   $("lift-result").classList.add("hidden");
   $("lift-hint").classList.remove("hidden");
+  $("profile-box").classList.add("hidden");
+  $("profile-chart").textContent = "";
+  $("profile-error").classList.add("hidden");
+  state.lastLiftDisplay = null;
+  clearLiftLine();
   if (state.clickMarker) { state.map.removeLayer(state.clickMarker); state.clickMarker = null; }
+}
+
+/** 曲率修正（弦线基准）显示值：z(d) − d(D−d)/(2·R_eff)，平地呈两端高中间低的弧线。 */
+function computeProfileDisplay(profile, rEffM) {
+  const d = profile.dist_m, e = profile.elev_m;
+  const total = d[d.length - 1];
+  return d.map((di, i) => e[i] - (di * (total - di)) / (2 * rEffM));
+}
+
+function profileSvgEl(tag, attrs = {}) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  return el;
+}
+
+/** 渲染剖面缩略图：display 为 {profile, feasible, lift_m}；剖面缺失时显示错误占位。 */
+function renderProfileThumbnail(display) {
+  const chart = $("profile-chart"), err = $("profile-error");
+  chart.textContent = "";
+  if (!display || !display.profile) {
+    err.classList.remove("hidden");
+    err.textContent = "剖面取数失败（DEM 不可用或超出覆盖范围）";
+    return;
+  }
+  err.classList.add("hidden");
+
+  const d = display.profile.dist_m;
+  const z = computeProfileDisplay(display.profile, effEarthRadiusM());
+  const total = d[d.length - 1];
+  const lift = display.feasible ? Math.max(0, display.lift_m || 0) : 0;
+  const sight0 = z[0], sight1 = z[z.length - 1] + lift; // 抬升后点击点 → 观测点
+
+  let lo = Math.min(sight0, sight1), hi = Math.max(sight0, sight1);
+  for (const v of z) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const pad = Math.max((hi - lo) * 0.08, 1.0);
+  lo -= pad; hi += pad;
+
+  const W = 480, H = 190, ML = 52, MR = 12, MT = 14, MB = 30;
+  const px = (di) => ML + (di / total) * (W - ML - MR);
+  const py = (v) => MT + ((hi - v) / (hi - lo)) * (H - MT - MB);
+
+  const svg = profileSvgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%" });
+
+  const inFt = $("unit").value === "ft";
+  const fmtTick = (m) => Math.round(inFt ? m * FT_PER_M : m).toLocaleString("en-US");
+  const fmtKm = (m) => (m / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 });
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + ((hi - lo) * i) / 4;
+    const y = py(v);
+    svg.appendChild(profileSvgEl("line", {
+      x1: ML, y1: y, x2: W - MR, y2: y, stroke: "#e2e4e8", "stroke-width": 1,
+    }));
+    const t = profileSvgEl("text", { x: ML - 6, y: y + 4, "text-anchor": "end", class: "tick" });
+    t.textContent = fmtTick(v);
+    svg.appendChild(t);
+  }
+  for (let i = 0; i <= 4; i++) {
+    const di = (total * i) / 4;
+    const t = profileSvgEl("text", { x: px(di), y: H - 8, "text-anchor": "middle", class: "tick" });
+    t.textContent = fmtKm(di);
+    svg.appendChild(t);
+  }
+  const yTitle = profileSvgEl("text", { x: ML - 6, y: MT - 3, "text-anchor": "end", class: "axis-title" });
+  yTitle.textContent = `高程 (${inFt ? "ft" : "m"})`;
+  svg.appendChild(yTitle);
+  const xTitle = profileSvgEl("text", { x: W - MR, y: H - 8, "text-anchor": "end", class: "axis-title" });
+  xTitle.textContent = "距离 (km)";
+  svg.appendChild(xTitle);
+
+  const pts = d.map((di, i) => `${px(di).toFixed(1)},${py(z[i]).toFixed(1)}`).join(" ");
+  svg.appendChild(profileSvgEl("polygon", {
+    points: `${ML},${H - MB} ${pts} ${W - MR},${H - MB}`,
+    fill: "rgba(160,99,42,0.14)", stroke: "none",
+  }));
+  svg.appendChild(profileSvgEl("polyline", {
+    points: pts, fill: "none", stroke: "#a0632a", "stroke-width": 1.5,
+  }));
+
+  svg.appendChild(profileSvgEl("line", {
+    x1: px(0), y1: py(sight0), x2: px(total), y2: py(sight1),
+    stroke: "#2469ce", "stroke-width": 1.2, "stroke-dasharray": "6 4",
+  }));
+  for (const [di, v] of [[0, sight0], [total, sight1]]) {
+    svg.appendChild(profileSvgEl("circle", { cx: px(di), cy: py(v), r: 2.5, fill: "#2469ce" }));
+  }
+
+  if (!display.feasible) {
+    const t = profileSvgEl("text", {
+      x: (ML + W - MR) / 2, y: (MT + H - MB) / 2, "text-anchor": "middle", class: "nosolve",
+    });
+    t.textContent = "无解";
+    svg.appendChild(t);
+  }
+  chart.appendChild(svg);
+}
+
+function clearLiftLine() {
+  if (state.liftLine) { state.map.removeLayer(state.liftLine); state.liftLine = null; }
+}
+
+/** 渲染观测点↔点击点测地线连线（与剖面采样同一条）；新连线覆盖旧连线。 */
+function updateLiftLine(geodesic) {
+  clearLiftLine();
+  if (!Array.isArray(geodesic) || geodesic.length < 2) return;
+  const latlngs = geodesic.map(([lon, lat]) => [lat, normalizeLon(lon)]);
+  state.liftLine = L.polyline(latlngs, {
+    color: "#c0392b", weight: 2.5, opacity: 0.9, dashArray: "8 6",
+  }).addTo(state.map);
 }
 
 async function onMapClick(e) {
@@ -357,14 +478,26 @@ async function onMapClick(e) {
     state.clickMarker = L.circleMarker([lat, lon],
       { radius: 5, color: "#2b2f36", weight: 2, fillOpacity: 0.6 })
       .bindTooltip(`点击点 ${fmtCoord(lon, lat)}`).addTo(state.map);
-    log("测高结果: 可行=%s 抬升=%s 距离=%.0fm",
+    // 剖面缩略图 + 测地线连线（几何不可行同样渲染；剖面缺失显示错误占位）
+    state.lastLiftDisplay = { profile: data.profile, feasible: data.feasible, lift_m: data.lift_m };
+    $("profile-box").classList.remove("hidden");
+    renderProfileThumbnail(state.lastLiftDisplay);
+    updateLiftLine(data.geodesic);
+    log("测高结果: 可行=%s 抬升=%s 距离=%.0fm 剖面=%s 连线=%d 点",
         data.feasible, data.lift_m !== null ? `${data.lift_m.toFixed(1)}m` : data.message,
-        data.distance_m);
+        data.distance_m, data.profile ? `${data.profile.dist_m.length} 点` : "不可用",
+        Array.isArray(data.geodesic) ? data.geodesic.length : 0);
   } catch (err) {
     warn("测高查询失败:", err.message);
     $("lift-hint").classList.remove("hidden");
     $("lift-hint").textContent = err.message;
     $("lift-hint").classList.add("err");
+    // 测高未完成：新连线不渲染；旧连线清除，旧剖面转错误占位
+    clearLiftLine();
+    if (!$("profile-box").classList.contains("hidden")) {
+      state.lastLiftDisplay = null;
+      renderProfileThumbnail(null);
+    }
   } finally {
     setBusy(false);
   }
@@ -427,6 +560,7 @@ function bindEvents() {
     if (state.observer) loadObserver(state.observer.lon, state.observer.lat);
   });
   $("unit").addEventListener("change", () => {
+    if (state.lastLiftDisplay) renderProfileThumbnail(state.lastLiftDisplay);
     if (state.observer) {
       $("obs-info").innerHTML =
         `观测点：${fmtCoord(state.observer.lon, state.observer.lat)}<br>` +
@@ -480,6 +614,37 @@ async function runSelfTest() {
   check("点选状态已清空", state.picked === null && $("picked-coord").value === "");
   check("确认后分段=文本框激活", segActive("text"));
   check("确认后按钮=进入地图选点", $("phase-toggle").textContent === "进入地图选点");
+
+  // —— 剖面缩略图与测地线连线 ——
+  const synth = {
+    dist_m: Array.from({ length: 41 }, (_, i) => i * 500),
+    elev_m: Array(41).fill(100),
+  };
+  const zDisp = computeProfileDisplay(synth, R_EARTH_M);
+  const sag = zDisp[0] - zDisp[20];
+  check("曲率修正中点凹陷≈D²/8R", Math.abs(sag - 20000 * 20000 / (8 * R_EARTH_M)) < 2.0);
+  state.lastLiftDisplay = { profile: synth, feasible: true, lift_m: 31.4 };
+  $("profile-box").classList.remove("hidden");
+  renderProfileThumbnail(state.lastLiftDisplay);
+  check("剖面SVG已渲染", $("profile-chart").querySelector("svg") !== null);
+  check("可行结果无无解标注", !$("profile-chart").textContent.includes("无解"));
+  check("高程轴单位=m", $("profile-chart").textContent.includes("高程 (m)"));
+  renderProfileThumbnail({ profile: synth, feasible: false, lift_m: null });
+  check("几何不可行叠加无解标注", $("profile-chart").textContent.includes("无解"));
+  $("unit").value = "ft";
+  renderProfileThumbnail({ profile: synth, feasible: true, lift_m: 31.4 });
+  check("高程轴单位联动=ft", $("profile-chart").textContent.includes("高程 (ft)"));
+  $("unit").value = "m";
+  renderProfileThumbnail(null);
+  check("剖面缺失显示错误占位", !$("profile-error").classList.contains("hidden"));
+  updateLiftLine([[116.0, 39.5], [116.5, 39.8], [117.0, 40.1]]);
+  check("测地线连线已渲染", state.liftLine !== null && state.map.hasLayer(state.liftLine));
+  updateLiftLine([[116.2, 39.6], [116.9, 40.0]]);
+  check("新连线覆盖旧连线", state.liftLine !== null
+    && state.liftLine.getLatLngs().length === 2 && state.map.hasLayer(state.liftLine));
+  resetLiftPanel();
+  check("重置时连线与剖面随旧结果清除",
+        state.liftLine === null && $("profile-box").classList.contains("hidden"));
 
   state.observer = null;
   updatePhaseBar();
