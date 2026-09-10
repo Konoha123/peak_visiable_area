@@ -329,11 +329,11 @@ function resetLiftPanel() {
   if (state.clickMarker) { state.map.removeLayer(state.clickMarker); state.clickMarker = null; }
 }
 
-/** 曲率修正（弦线基准）显示值：z(d) − d(D−d)/(2·R_eff)，平地呈两端高中间低的弧线。 */
+/** 曲率修正（弦线基准）显示值：z(d) + d(D−d)/(2·R_eff)，平地呈两端低中间高的弧线（地球凸起）。 */
 function computeProfileDisplay(profile, rEffM) {
   const d = profile.dist_m, e = profile.elev_m;
   const total = d[d.length - 1];
-  return d.map((di, i) => e[i] - (di * (total - di)) / (2 * rEffM));
+  return d.map((di, i) => e[i] + (di * (total - di)) / (2 * rEffM));
 }
 
 function profileSvgEl(tag, attrs = {}) {
@@ -354,7 +354,8 @@ function renderProfileThumbnail(display) {
   err.classList.add("hidden");
 
   const d = display.profile.dist_m;
-  const z = computeProfileDisplay(display.profile, effEarthRadiusM());
+  const rEff = effEarthRadiusM();
+  const z = computeProfileDisplay(display.profile, rEff);
   const total = d[d.length - 1];
   const lift = display.feasible ? Math.max(0, display.lift_m || 0) : 0;
   const sight0 = z[0], sight1 = z[z.length - 1] + lift; // 抬升后点击点 → 观测点
@@ -421,6 +422,14 @@ function renderProfileThumbnail(display) {
     svg.appendChild(t);
   }
   chart.appendChild(svg);
+
+  // 图注：说明曲率修正量与视线含义（单位随米/英尺联动）
+  const cap = document.createElement("div");
+  cap.className = "profile-caption";
+  cap.textContent =
+    `剖面含地球曲率修正（弦线基准，中点凸起≈${fmtHeight((total * total) / (8 * rEff))}）；` +
+    "蓝色虚线为抬升后的视线（直线）。";
+  chart.appendChild(cap);
 }
 
 function clearLiftLine() {
@@ -621,12 +630,40 @@ async function runSelfTest() {
     elev_m: Array(41).fill(100),
   };
   const zDisp = computeProfileDisplay(synth, R_EARTH_M);
-  const sag = zDisp[0] - zDisp[20];
-  check("曲率修正中点凹陷≈D²/8R", Math.abs(sag - 20000 * 20000 / (8 * R_EARTH_M)) < 2.0);
+  const bulge = zDisp[20] - zDisp[0];
+  check("曲率修正中点凸起≈D²/8R", Math.abs(bulge - 20000 * 20000 / (8 * R_EARTH_M)) < 2.0);
   state.lastLiftDisplay = { profile: synth, feasible: true, lift_m: 31.4 };
   $("profile-box").classList.remove("hidden");
   renderProfileThumbnail(state.lastLiftDisplay);
   check("剖面SVG已渲染", $("profile-chart").querySelector("svg") !== null);
+  check("图注含曲率修正说明", $("profile-chart").textContent.includes("曲率修正")
+    && $("profile-chart").textContent.includes("视线"));
+  const blueLine = $("profile-chart").querySelector('line[stroke="#2469ce"]');
+  const blueDots = $("profile-chart").querySelectorAll('circle[fill="#2469ce"]');
+  check("蓝线为直线段且端点锚定剖面两端", blueLine !== null && blueDots.length === 2
+    && Math.abs(+blueLine.getAttribute("x1") - +blueDots[0].getAttribute("cx")) < 0.5
+    && Math.abs(+blueLine.getAttribute("y1") - +blueDots[0].getAttribute("cy")) < 0.5
+    && Math.abs(+blueLine.getAttribute("x2") - +blueDots[1].getAttribute("cx")) < 0.5
+    && Math.abs(+blueLine.getAttribute("y2") - +blueDots[1].getAttribute("cy")) < 0.5);
+
+  // 最小抬升时蓝线应与剖面相切：平坦地形+中央脊，抬升取解析解（excess=0 于脊顶）
+  const ridgeElev = 110, dropMid = (10000 * 10000) / (2 * R_EARTH_M);
+  const liftTang = 2 * (ridgeElev - 100 + dropMid);
+  renderProfileThumbnail({
+    profile: { dist_m: synth.dist_m,
+               elev_m: synth.elev_m.map((v, i) => (i === 20 ? ridgeElev : v)) },
+    feasible: true, lift_m: liftTang,
+  });
+  const svg2 = $("profile-chart").querySelector("svg");
+  const line2 = svg2.querySelector('line[stroke="#2469ce"]');
+  const ridgePt = svg2.querySelector('polyline[stroke="#a0632a"]')
+    .getAttribute("points").split(" ")[20].split(",").map(Number);
+  const { x1, y1, x2, y2 } = {
+    x1: +line2.getAttribute("x1"), y1: +line2.getAttribute("y1"),
+    x2: +line2.getAttribute("x2"), y2: +line2.getAttribute("y2"),
+  };
+  const sightY = y1 + (y2 - y1) * ((ridgePt[0] - x1) / (x2 - x1));
+  check("最小抬升时蓝线与剖面相切", Math.abs(sightY - ridgePt[1]) < 0.6);
   check("可行结果无无解标注", !$("profile-chart").textContent.includes("无解"));
   check("高程轴单位=m", $("profile-chart").textContent.includes("高程 (m)"));
   renderProfileThumbnail({ profile: synth, feasible: false, lift_m: null });

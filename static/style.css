@@ -91,6 +91,8 @@ button:disabled { background: #9db4e0; cursor: wait; }
 #profile-chart svg { display: block; background: #fbfcfd; border: 1px solid var(--border);
   border-radius: 6px; }
 #profile-chart .tick { font-size: 10px; fill: var(--muted); }
+#profile-chart .profile-caption { font-size: 10px; color: var(--muted);
+  line-height: 1.5; margin-top: 4px; }
 #profile-chart .axis-title { font-size: 10px; fill: var(--muted); font-weight: 600; }
 #profile-chart .nosolve { font-size: 16px; font-weight: 700; fill: var(--err);
   paint-order: stroke; stroke: #fff; stroke-width: 3px; }
