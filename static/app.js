@@ -13,8 +13,9 @@ const state = {
   liftLine: null,          // 最近一次测高的测地线连线（仅保留最新一条）
   lastLiftDisplay: null,   // 最近一次测高的剖面显示数据（单位切换时重绘用）
   pendingText: null,       // 文本框当前内容经即时校验得到的待确认坐标 {lon, lat}
-  peak: { pick: null, tune: null },      // 两工具各自最新一次搜索结果（含 center/radius_m）
-  peakHintKind: { pick: "", tune: "" },  // 提示类型标记（err 时保留至下次搜索）
+  lastLiftClick: null,     // 最近一次测高点击点 {lon, lat}（测高点辅助的搜索中心）
+  peak: { pick: null, lift: null },      // 两工具各自最新一次搜索结果（含 center/radius_m）
+  peakHintKind: { pick: "", lift: "" },  // 提示类型标记（err 时保留至下次搜索）
   busyCount: 0,
 };
 
@@ -334,6 +335,7 @@ function resetLiftPanel() {
   $("profile-chart").textContent = "";
   $("profile-error").classList.add("hidden");
   state.lastLiftDisplay = null;
+  state.lastLiftClick = null;
   clearLiftLine();
   if (state.clickMarker) { state.map.removeLayer(state.clickMarker); state.clickMarker = null; }
 }
@@ -472,6 +474,11 @@ async function onMapClick(e) {
     return;
   }
   const lon = e.latlng.lng, lat = e.latlng.lat;
+  await measureLift(lon, lat);
+}
+
+/** 点选测高管线：地图点击与“采用为测高点”共用（程序化等效点击）。 */
+async function measureLift(lon, lat) {
   setBusy(true);
   try {
     const data = await api("/api/lift", {
@@ -502,6 +509,8 @@ async function onMapClick(e) {
     $("profile-box").classList.remove("hidden");
     renderProfileThumbnail(state.lastLiftDisplay);
     updateLiftLine(data.geodesic);
+    state.lastLiftClick = { lon, lat };
+    updatePeakTools();
     log("测高结果: 可行=%s 抬升=%s 距离=%.0fm 剖面=%s 连线=%d 点",
         data.feasible, data.lift_m !== null ? `${data.lift_m.toFixed(1)}m` : data.message,
         data.distance_m, data.profile ? `${data.profile.dist_m.length} 点` : "不可用",
@@ -522,9 +531,10 @@ async function onMapClick(e) {
   }
 }
 
-/* ---------------- 附近制高点搜索（选点辅助 / 观测点微调辅助） ---------------- */
+/* ---------------- 附近制高点搜索（选点辅助 / 测高点辅助） ---------------- */
 
-const PEAK_TOOLS = ["pick", "tune"];
+const PEAK_TOOLS = ["pick", "lift"];
+const PEAK_COLORS = { pick: "#e67e22", lift: "#0f766e" };
 
 /** 工具一（选点辅助）的搜索中心：点选模式=已点选坐标；文本模式=即时校验通过的文本坐标。 */
 function selectionCenter() {
@@ -539,7 +549,7 @@ function showPeakHint(tool, msg, kind) {
   state.peakHintKind[tool] = kind || "";
 }
 
-/** 按阶段刷新两工具可用性：选点辅助=有待确认中心；微调辅助=已确认观测点。 */
+/** 按阶段刷新两工具可用性：选点辅助=有待确认中心；测高点辅助=可测高且已有测高点击。 */
 function updatePeakTools() {
   const hasPickCenter = !!selectionCenter();
   $("peak-search-pick").disabled = !hasPickCenter;
@@ -550,11 +560,16 @@ function updatePeakTools() {
   } else if (state.peakHintKind.pick !== "err") {
     showPeakHint("pick", "", "");
   }
-  $("peak-search-tune").disabled = !state.observer;
-  if (!state.observer) {
-    showPeakHint("tune", "确认观测点后可用", "");
-  } else if (state.peakHintKind.tune !== "err") {
-    showPeakHint("tune", "", "");
+  const liftReady = !!state.observer && state.inputMode !== "map" && !!state.lastLiftClick;
+  $("peak-search-lift").disabled = !liftReady;
+  if (!liftReady) {
+    showPeakHint("lift", !state.observer
+      ? "确认观测点后可用"
+      : state.inputMode === "map"
+        ? "选点模式下测高暂不可用"
+        : "先点击地图测高，再搜索该点附近制高点", "");
+  } else if (state.peakHintKind.lift !== "err") {
+    showPeakHint("lift", "", "");
   }
 }
 
@@ -580,7 +595,7 @@ function scheduleTextValidate() {
 
 async function runPeakSearch(tool) {
   const center = tool === "pick" ? selectionCenter()
-    : (state.observer ? { lon: state.observer.lon, lat: state.observer.lat } : null);
+    : (state.lastLiftClick ? { ...state.lastLiftClick } : null);
   if (!center) return;
   const btn = $(`peak-search-${tool}`);
   btn.disabled = true;
@@ -594,7 +609,7 @@ async function runPeakSearch(tool) {
     });
     state.peak[tool] = { ...res, center, radius_m: radiusM };
     renderPeakResult(tool, state.peak[tool]);
-    drawPeakOnMap(state.peak[tool]);
+    drawPeakOnMap(tool, state.peak[tool]);
     log("制高点搜索[%s]: 中心(%.5f, %.5f) 半径=%.1fkm → 候选(%.5f, %.5f) 高程=%.1fm 距离=%.0fm 覆盖率=%.2f 中心即最高=%s",
         tool, center.lon, center.lat, radiusM / 1000, res.lon, res.lat,
         res.elevation_m, res.distance_m, res.coverage_ratio, res.is_center_highest);
@@ -631,13 +646,14 @@ function renderPeakResult(tool, entry) {
   }
 }
 
-function drawPeakOnMap(entry) {
-  // 虚线搜索范围圆 + 候选 marker；不自动平移地图（候选超出显示范围时侧栏结果仍完整）
+function drawPeakOnMap(tool, entry) {
+  // 虚线搜索范围圆 + 候选 marker（两工具颜色区分）；不自动平移地图
+  const color = PEAK_COLORS[tool];
   L.circle([entry.center.lat, entry.center.lon], {
-    radius: entry.radius_m, color: "#e67e22", weight: 1, dashArray: "4 4", fill: false,
+    radius: entry.radius_m, color, weight: 1, dashArray: "4 4", fill: false,
   }).addTo(state.peakGroup);
   L.circleMarker([entry.lat, entry.lon], {
-    radius: 6, color: "#e67e22", weight: 2, fillOpacity: 0.9,
+    radius: 6, color, weight: 2, fillOpacity: 0.9,
   }).bindTooltip(`制高点候选 ${fmtCoord(entry.lon, entry.lat)}`).addTo(state.peakGroup);
 }
 
@@ -651,7 +667,7 @@ function refreshPeakElevations() {
 /** 清除两工具结果与地图图形（更换观测点 / 采用后由确认链路触发）。 */
 function resetPeakPanels() {
   state.peak.pick = null;
-  state.peak.tune = null;
+  state.peak.lift = null;
   if (state.peakGroup) state.peakGroup.clearLayers();
   for (const tool of PEAK_TOOLS) {
     $(`peak-result-${tool}`).classList.add("hidden");
@@ -660,11 +676,16 @@ function resetPeakPanels() {
   updatePeakTools();
 }
 
-/** 采用候选为观测点：以候选坐标走既有【确认输入】生效链路（不旁路直调）。 */
+/** 采用候选（按工具分流）：工具一＝以候选坐标走既有【确认输入】生效链路；
+ * 工具二＝程序化等效点击该候选点测高（见 adoptPeakAsLiftPoint）。 */
 async function adoptPeak(tool) {
   const entry = state.peak[tool];
   if (!entry || entry.is_center_highest) return;
-  const btn = $(`peak-adopt-${tool}`);
+  if (tool === "lift") {
+    await adoptPeakAsLiftPoint(entry);
+    return;
+  }
+  const btn = $("peak-adopt-pick");
   btn.disabled = true;
   try {
     if (state.inputMode === "map") setInputMode("text"); // Esc 语义退出点选模式
@@ -672,6 +693,19 @@ async function adoptPeak(tool) {
     $("coord").value = `${entry.lon.toFixed(6)}, ${entry.lat.toFixed(6)}`;
     state.pendingText = { lon: entry.lon, lat: entry.lat };
     await onConfirm();
+  } finally {
+    btn.disabled = false;
+    updatePeakTools();
+  }
+}
+
+/** 采用为测高点：程序化等效点击该候选点，复用点选测高管线；不更换观测点、不改输入框。 */
+async function adoptPeakAsLiftPoint(entry) {
+  const btn = $("peak-adopt-lift");
+  btn.disabled = true;
+  try {
+    resetPeakPanels(); // 清候选 marker＋范围圆；测高可视化（点击点 marker/剖面/连线）由既有管线接管
+    await measureLift(entry.lon, entry.lat);
   } finally {
     btn.disabled = false;
     updatePeakTools();
@@ -856,27 +890,39 @@ async function runSelfTest() {
   check("重置时连线与剖面随旧结果清除",
         state.liftLine === null && $("profile-box").classList.contains("hidden"));
 
-  // —— 附近制高点搜索（选点辅助 / 观测点微调辅助） ——
+  // —— 附近制高点搜索（选点辅助 / 测高点辅助） ——
   state.observer = null;
   state.pendingText = null;
+  state.lastLiftClick = null;
   updatePeakTools();
-  const pickSel = $("peak-radius-pick"), tuneSel = $("peak-radius-tune");
+  const pickSel = $("peak-radius-pick"), liftSel = $("peak-radius-lift");
   check("制高点档位=6档默认2km(选点辅助)",
         pickSel.options.length === 6 && pickSel.value === "2000");
-  check("制高点档位=6档默认2km(微调辅助)",
-        tuneSel.options.length === 6 && tuneSel.value === "2000");
-  tuneSel.value = "5000";
+  check("制高点档位=6档默认2km(测高点辅助)",
+        liftSel.options.length === 6 && liftSel.value === "2000");
+  liftSel.value = "5000";
   check("两工具下拉相互独立", pickSel.value === "2000");
-  tuneSel.value = "2000";
+  liftSel.value = "2000";
   check("无待确认坐标时工具一禁用", $("peak-search-pick").disabled === true);
-  check("未设定观测点时工具二禁用", $("peak-search-tune").disabled === true);
+  check("未设定观测点时工具二禁用", $("peak-search-lift").disabled === true);
 
   $("coord").value = "116.397, 39.909";
   await validateTextNow();
   check("文本即时校验通过后工具一启用", $("peak-search-pick").disabled === false);
   state.observer = { lon: 116.397, lat: 39.909, elevation: 50, radius: 25240 };
   updatePeakTools();
-  check("设定观测点后工具二启用", $("peak-search-tune").disabled === false);
+  check("设定观测点但无测高点击时工具二仍禁用", $("peak-search-lift").disabled === true);
+  setInputMode("map");
+  check("选点模式期间工具一禁用(中心切至点选坐标)", $("peak-search-pick").disabled === true);
+  state.picked = { lon: 116.4, lat: 39.92 };
+  updatePeakTools();
+  check("点选后工具一恢复可用", $("peak-search-pick").disabled === false);
+  check("选点模式期间工具二禁用(测高暂不可用)", $("peak-search-lift").disabled === true);
+  state.picked = null;
+  setInputMode("text");
+  state.lastLiftClick = { lon: 116.42, lat: 39.93 };
+  updatePeakTools();
+  check("产生测高点击后工具二启用", $("peak-search-lift").disabled === false);
 
   // 结果渲染分支（直接驱动渲染函数）
   state.peak.pick = { lon: 116.4, lat: 39.95, elevation_m: 100, distance_m: 0,
@@ -919,6 +965,13 @@ async function runSelfTest() {
                         engine: "angular-ray-sweep", refraction: "geometric",
                         visible_cells: 123, elapsed_s: 0.05, dem_source: "stub" });
     }
+    if (path === "/api/lift") {
+      return jsonResp({ feasible: true, lift_m: 31.4, message: null,
+                        observer_elev_m: 43.5, clicked_elev_m: 800.0, distance_m: 12900.0,
+                        central_angle_deg: 0.1146, refraction: "geometric",
+                        profile: { dist_m: [0, 6450, 12900], elev_m: [43.5, 300, 800] },
+                        geodesic: [[116.397, 39.909], [116.5, 40.0]] });
+    }
     if (path === "/api/peak-search") {
       peakCalls.last = body;
       return jsonResp({ lon: 116.5, lat: 40.0, elevation_m: 800.0, distance_m: 12900.0,
@@ -934,25 +987,45 @@ async function runSelfTest() {
       && $("peak-coord-pick").textContent === "116.500000, 40.000000"
       && $("peak-dist-pick").textContent === "12.90 km");
     check("工具一范围圆与候选marker已渲染", state.peakGroup.getLayers().length === 2);
-    await runPeakSearch("tune");
-    check("工具二请求中心=已确认观测点", peakCalls.last && peakCalls.last.lon === 116.397);
+    check("工具一候选marker为橙色系",
+          state.peakGroup.getLayers()[1].options.color === "#e67e22");
+    await runPeakSearch("lift");
+    check("工具二请求中心=最近一次测高点击点", peakCalls.last && peakCalls.last.lon === 116.42);
     check("再次搜索覆盖旧结果(仅保留最新一组)",
           $("peak-result-pick").classList.contains("hidden") && state.peak.pick === null
-          && !$("peak-result-tune").classList.contains("hidden"));
+          && !$("peak-result-lift").classList.contains("hidden"));
+    check("工具二候选样式与工具一区分",
+          state.peakGroup.getLayers()[0].options.color === "#0f766e"
+          && state.peakGroup.getLayers()[1].options.color === "#0f766e");
     $("unit").value = "ft";
     refreshPeakElevations();
-    check("候选高程随米/英尺联动", $("peak-elev-tune").textContent.includes("ft"));
+    check("候选高程随米/英尺联动", $("peak-elev-lift").textContent.includes("ft"));
     $("unit").value = "m";
     refreshPeakElevations();
-    await adoptPeak("tune");
-    check("采用后文本框=候选坐标(十进制)", $("coord").value === "116.500000, 40.000000");
-    check("采用后观测点=候选坐标且阶段=可测高",
-          state.observer && state.observer.lon === 116.5 && state.observer.lat === 40.0
+    // 采用为测高点：程序化等效点击测高，不更换观测点、不改输入框
+    await adoptPeak("lift");
+    check("采用为测高点后测高面板显示候选点",
+          !$("lift-result").classList.contains("hidden")
+          && $("click-pos").textContent.includes("40.00000"));
+    check("采用为测高点渲染剖面与测地线连线",
+          $("profile-chart").querySelector("svg") !== null && state.liftLine !== null);
+    check("采用为测高点后最近测高点击点更新为候选",
+          state.lastLiftClick && state.lastLiftClick.lon === 116.5
+          && state.lastLiftClick.lat === 40.0);
+    check("采用为测高点不更换观测点与输入框",
+          state.observer.lon === 116.397 && $("coord").value === "116.397, 39.909"
           && $("phase-badge").textContent === "可测高");
     check("采用后候选marker与两工具结果清除",
-          state.peak.pick === null && state.peak.tune === null
-          && state.peakGroup.getLayers().length === 0
-          && $("peak-result-tune").classList.contains("hidden"));
+          state.peak.lift === null && state.peakGroup.getLayers().length === 0
+          && $("peak-result-lift").classList.contains("hidden"));
+    // 采用为观测点（工具一链路）
+    await runPeakSearch("pick");
+    await adoptPeak("pick");
+    check("采用为观测点后文本框=候选坐标(十进制)",
+          $("coord").value === "116.500000, 40.000000");
+    check("采用为观测点后观测点=候选且阶段=可测高",
+          state.observer && state.observer.lon === 116.5 && state.observer.lat === 40.0
+          && $("phase-badge").textContent === "可测高");
   } finally {
     window.fetch = origFetch;
   }

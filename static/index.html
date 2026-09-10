@@ -72,32 +72,6 @@
         </div>
       </section>
 
-      <section class="card" id="peak-finetune-card">
-        <h2>观测点微调：附近制高点</h2>
-        <div class="row">
-          <label for="peak-radius-tune">搜索半径</label>
-          <select id="peak-radius-tune">
-            <option value="500">0.5 km</option>
-            <option value="1000">1 km</option>
-            <option value="2000" selected>2 km</option>
-            <option value="5000">5 km</option>
-            <option value="10000">10 km</option>
-            <option value="25000">25 km</option>
-          </select>
-        </div>
-        <div class="row">
-          <button id="peak-search-tune">搜索附近制高点</button>
-        </div>
-        <p id="peak-hint-tune" class="feedback"></p>
-        <div id="peak-result-tune" class="lift-result hidden">
-          <div class="kv"><span>候选坐标</span><b id="peak-coord-tune"></b></div>
-          <div class="kv"><span>候选高程</span><b id="peak-elev-tune" class="lift-value"></b></div>
-          <div class="kv"><span>距中心</span><b id="peak-dist-tune"></b></div>
-          <p id="peak-note-tune" class="feedback"></p>
-          <div class="row"><button id="peak-adopt-tune">采用为观测点</button></div>
-        </div>
-      </section>
-
       <section class="card">
         <h2>设置</h2>
         <div class="row">
@@ -159,6 +133,32 @@
             <div id="profile-chart"></div>
             <div id="profile-error" class="profile-error hidden"></div>
           </div>
+        </div>
+      </section>
+
+      <section class="card" id="peak-lift-card">
+        <h2>测高点辅助：附近制高点</h2>
+        <div class="row">
+          <label for="peak-radius-lift">搜索半径</label>
+          <select id="peak-radius-lift">
+            <option value="500">0.5 km</option>
+            <option value="1000">1 km</option>
+            <option value="2000" selected>2 km</option>
+            <option value="5000">5 km</option>
+            <option value="10000">10 km</option>
+            <option value="25000">25 km</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="peak-search-lift">搜索附近制高点</button>
+        </div>
+        <p id="peak-hint-lift" class="feedback"></p>
+        <div id="peak-result-lift" class="lift-result hidden">
+          <div class="kv"><span>候选坐标</span><b id="peak-coord-lift"></b></div>
+          <div class="kv"><span>候选高程</span><b id="peak-elev-lift" class="lift-value"></b></div>
+          <div class="kv"><span>距中心</span><b id="peak-dist-lift"></b></div>
+          <p id="peak-note-lift" class="feedback"></p>
+          <div class="row"><button id="peak-adopt-lift">采用为测高点</button></div>
         </div>
       </section>
 
