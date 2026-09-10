@@ -120,22 +120,6 @@
         </details>
       </section>
 
-      <section class="card" id="result-card">
-        <h2>点选测高</h2>
-        <p id="lift-hint" class="hint">先确认观测点，然后点击地图任意位置：<br>将显示该点为看见观测点所需的最小抬升高度。</p>
-        <div id="lift-result" class="lift-result hidden">
-          <div class="kv"><span>点击位置</span><b id="click-pos"></b></div>
-          <div class="kv"><span>点击点地面高程</span><b id="click-elev"></b></div>
-          <div class="kv"><span>两点距离</span><b id="click-dist"></b></div>
-          <div class="kv"><span>最小抬升高度</span><b id="lift-value" class="lift-value"></b></div>
-          <div id="profile-box" class="profile-box hidden">
-            <div class="profile-title">两点间地形剖面（曲率修正基准线）</div>
-            <div id="profile-chart"></div>
-            <div id="profile-error" class="profile-error hidden"></div>
-          </div>
-        </div>
-      </section>
-
       <section class="card" id="peak-lift-card">
         <h2>测高点辅助：附近制高点</h2>
         <div class="row">
@@ -159,6 +143,22 @@
           <div class="kv"><span>距中心</span><b id="peak-dist-lift"></b></div>
           <p id="peak-note-lift" class="feedback"></p>
           <div class="row"><button id="peak-adopt-lift">采用为测高点</button></div>
+        </div>
+      </section>
+
+      <section class="card" id="result-card">
+        <h2>点选测高</h2>
+        <p id="lift-hint" class="hint">先确认观测点，然后点击地图任意位置：<br>将显示该点为看见观测点所需的最小抬升高度。</p>
+        <div id="lift-result" class="lift-result hidden">
+          <div class="kv"><span>点击位置</span><b id="click-pos"></b></div>
+          <div class="kv"><span>点击点地面高程</span><b id="click-elev"></b></div>
+          <div class="kv"><span>两点距离</span><b id="click-dist"></b></div>
+          <div class="kv"><span>最小抬升高度</span><b id="lift-value" class="lift-value"></b></div>
+          <div id="profile-box" class="profile-box hidden">
+            <div class="profile-title">两点间地形剖面（曲率修正基准线）</div>
+            <div id="profile-chart"></div>
+            <div id="profile-error" class="profile-error hidden"></div>
+          </div>
         </div>
       </section>
 
