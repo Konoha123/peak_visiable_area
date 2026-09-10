@@ -32,6 +32,10 @@ class LiftResult:
     central_angle_deg: float
     spacing_m: float
     refraction: str
+    # 剖面采样（d, elev），与测高求解所用同一份；DEM 不可覆盖时为 None
+    profile: tuple[np.ndarray, np.ndarray] | None = None
+    # 测地线顶点 (n, 2)= [lon, lat]，与剖面采样同一组插值点；纯几何、总可产出
+    geodesic: np.ndarray | None = None
 
 
 def _central_angle_rad(lon0: float, lat0: float, lon1: float, lat1: float) -> float:
@@ -71,17 +75,27 @@ def solve_min_lift(
     if omega >= math.pi / 2 - 1e-12:
         logger.info("测高: 地心角=%.2f° ≥ 90°，几何不可行（兜底字符串）",
                     math.degrees(omega))
+        # 测地线为纯几何量、仍可产出（地图连线照常渲染）；剖面仅在 DEM 可覆盖时附带
+        spacing = grid.cell_size_m(0.5 * (obs_lat + click_lat))
+        d, elev, lons, lats = grid.sample_geodesic_profile(
+            obs_lon, obs_lat, click_lon, click_lat, spacing)
+        geodesic = np.column_stack((lons, lats))
+        covered = not (math.isnan(float(elev[0])) or math.isnan(float(elev[-1]))
+                       or bool(np.isnan(elev[1:-1]).any()))
         return LiftResult(
             feasible=False, lift_m=None,
             observer_elev=float("nan"), clicked_elev=float("nan"),
             distance_m=omega * EARTH_RADIUS_M,
             central_angle_deg=math.degrees(omega),
-            spacing_m=0.0, refraction=refraction,
+            spacing_m=float(spacing), refraction=refraction,
+            profile=(d, elev) if covered else None,
+            geodesic=geodesic,
         )
 
     r_eff = effective_earth_radius_m(refraction)
     spacing = grid.cell_size_m(0.5 * (obs_lat + click_lat))
-    d, elev = grid.sample_profile(obs_lon, obs_lat, click_lon, click_lat, spacing)
+    d, elev, lons, lats = grid.sample_geodesic_profile(
+        obs_lon, obs_lat, click_lon, click_lat, spacing)
     if math.isnan(float(elev[0])) or math.isnan(float(elev[-1])):
         raise DEMError("观测点或点击点落在 DEM 覆盖范围/无数据区域之外")
     if np.isnan(elev[1:-1]).any():
@@ -101,4 +115,6 @@ def solve_min_lift(
         distance_m=float(d[-1]),
         central_angle_deg=math.degrees(omega),
         spacing_m=float(spacing), refraction=refraction,
+        profile=(d, elev),
+        geodesic=np.column_stack((lons, lats)),
     )

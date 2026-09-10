@@ -104,6 +104,35 @@ class TestSolveMinLift:
         assert res.feasible and res.lift_m == 0.0
 
 
+class TestProfileAndGeodesic:
+    def test_feasible_carries_profile_and_geodesic(self) -> None:
+        grid, lon0, lat0 = make_grid(101, 100.0, base=500.0)
+        lon1, lat1 = point_at(lon0, lat0, 5000.0, 0.0)
+        res = solve_min_lift(grid, lon0, lat0, lon1, lat1, "geometric")
+        assert res.profile is not None and res.geodesic is not None
+        d, elev = res.profile
+        assert len(d) == len(elev) and len(d) >= 2
+        assert d[0] == 0.0
+        assert d[-1] == pytest.approx(res.distance_m, rel=1e-9)
+        assert np.allclose(elev, 500.0, atol=1.0)
+        g = res.geodesic
+        assert g.ndim == 2 and g.shape[1] == 2 and g.shape[0] == len(d)
+        assert g[0] == pytest.approx([lon0, lat0], abs=1e-6)
+        assert g[-1] == pytest.approx([lon1, lat1], abs=1e-6)
+        assert np.all(np.diff(g[:, 0]) > 0)  # 自西向东单调
+
+    def test_infeasible_keeps_geodesic_without_profile(self) -> None:
+        # 网格仅覆盖北纬 45° 附近，赤道大圆路径全程无 DEM → 剖面 None、测地线仍产出
+        grid, lon0, lat0 = make_grid(101, 100.0)
+        res = solve_min_lift(grid, 0.0, 0.0, 180.0, 0.0, "geometric")
+        assert not res.feasible
+        assert res.profile is None
+        assert res.geodesic is not None
+        assert res.geodesic[0] == pytest.approx([0.0, 0.0], abs=1e-6)
+        assert res.geodesic[-1] == pytest.approx([180.0, 0.0], abs=1e-6)
+        assert len(res.geodesic) >= 2
+
+
 def test_impossible_message_constant() -> None:
     assert IMPOSSIBLE_MESSAGE and isinstance(IMPOSSIBLE_MESSAGE, str)
     _ = LiftResult  # 确认导出

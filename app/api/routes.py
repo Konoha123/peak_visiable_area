@@ -57,6 +57,21 @@ NEAR_RADIUS_LIMIT_M = 50_000.0
 MAX_GRID_DIM = 3000
 HORIZON_WINDOW_M = 2000.0
 
+# 测高响应中剖面/测地线的抽稀上限（仅影响显示数据量，计算仍用全采样）
+MAX_PROFILE_POINTS = 2048
+MAX_LINE_VERTICES = 512
+
+
+def _decimated_indices(n: int, cap: int) -> list[int]:
+    """0..n-1 的等距抽稀索引（必含首末点）。"""
+    if n <= cap:
+        return list(range(n))
+    step = (n - 1) / (cap - 1)
+    idx = sorted({round(i * step) for i in range(cap)})
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return idx
+
 
 class ValidateRequest(BaseModel):
     text: str
@@ -243,10 +258,27 @@ def lift(req: LiftRequest) -> dict:
     except DEMError as exc:
         logger.warning("测高失败: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    logger.info("测高响应: 可行=%s 抬升=%s 距离=%.1fm",
+
+    profile_json = None
+    if res.profile is not None:
+        d_arr, e_arr = res.profile
+        idx = _decimated_indices(len(d_arr), MAX_PROFILE_POINTS)
+        profile_json = {
+            "dist_m": [round(float(d_arr[i]), 1) for i in idx],
+            "elev_m": [round(float(e_arr[i]), 1) for i in idx],
+        }
+    geodesic_json = None
+    if res.geodesic is not None:
+        idx = _decimated_indices(len(res.geodesic), MAX_LINE_VERTICES)
+        geodesic_json = [[round(float(res.geodesic[i, 0]), 6),
+                          round(float(res.geodesic[i, 1]), 6)] for i in idx]
+
+    logger.info("测高响应: 可行=%s 抬升=%s 距离=%.1fm 剖面=%s 测地线=%d 点",
                 res.feasible,
                 f"{res.lift_m:.1f}m" if res.lift_m is not None else "N/A",
-                res.distance_m)
+                res.distance_m,
+                f"{len(profile_json['dist_m'])} 点" if profile_json else "无",
+                len(geodesic_json) if geodesic_json else 0)
     return {
         "feasible": res.feasible,
         "lift_m": res.lift_m,
@@ -256,4 +288,6 @@ def lift(req: LiftRequest) -> dict:
         "distance_m": res.distance_m,
         "central_angle_deg": round(res.central_angle_deg, 4),
         "refraction": res.refraction,
+        "profile": profile_json,
+        "geodesic": geodesic_json,
     }

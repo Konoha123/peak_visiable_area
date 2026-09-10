@@ -153,6 +153,14 @@ class TestLift:
         assert body["feasible"] is True
         drop = 10000 * 10000 / (2 * R)
         assert body["lift_m"] == pytest.approx((150.0 + drop) * 2.0, rel=0.05)
+        # 剖面与测地线随响应附带（同一份采样）
+        profile, geodesic = body["profile"], body["geodesic"]
+        assert profile is not None and geodesic is not None
+        assert len(profile["dist_m"]) == len(profile["elev_m"]) >= 2
+        assert profile["dist_m"][0] == 0.0
+        assert profile["dist_m"][-1] == pytest.approx(body["distance_m"], abs=0.2)
+        assert geodesic[0] == pytest.approx([lon - dlon, lat], abs=1e-4)
+        assert geodesic[-1] == pytest.approx([lon + dlon, lat], abs=1e-4)
 
     def test_infeasible_message(self, monkeypatch) -> None:
         grid = make_grid(51, 100.0)
@@ -165,6 +173,19 @@ class TestLift:
         assert body["feasible"] is False
         assert body["lift_m"] is None
         assert "无法通过抬升实现通视" in body["message"]
+        # 几何不可行：测地线仍返回（连线渲染），剖面因 DEM 不覆盖为 None
+        assert body["geodesic"] is not None
+        assert body["geodesic"][0] == pytest.approx([0.0, 0.0], abs=1e-4)
+        assert body["geodesic"][-1] == pytest.approx([180.0, 0.0], abs=1e-4)
+        assert body["profile"] is None
+
+    def test_decimated_indices(self) -> None:
+        from app.api.routes import MAX_PROFILE_POINTS, _decimated_indices
+        assert _decimated_indices(10, 100) == list(range(10))
+        idx = _decimated_indices(5000, MAX_PROFILE_POINTS)
+        assert len(idx) <= MAX_PROFILE_POINTS + 1
+        assert idx[0] == 0 and idx[-1] == 4999
+        assert all(b > a for a, b in zip(idx, idx[1:], strict=True))
 
 
 def test_engine_and_source_lists(client: TestClient) -> None:

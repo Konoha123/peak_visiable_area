@@ -95,6 +95,16 @@ class ElevationGrid:
 
         采样密度即所用 DEM 的单元格尺寸（由调用方传入）。
         """
+        d, elev, _, _ = self.sample_geodesic_profile(lon0, lat0, lon1, lat1, spacing_m)
+        return d, elev
+
+    def sample_geodesic_profile(
+        self, lon0: float, lat0: float, lon1: float, lat1: float, spacing_m: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """同 sample_profile，但一并返回采样顶点坐标（经度序列, 纬度序列）。
+
+        剖面高程与测地线顶点出自同一组插值点，供剖面显示与地图连线共用。
+        """
         r = 6_371_000.0
         p0 = _unit_vector(lon0, lat0)
         p1 = _unit_vector(lon1, lat1)
@@ -113,7 +123,7 @@ class ElevationGrid:
         lats = np.degrees(np.arcsin(np.clip(points[:, 2], -1.0, 1.0)))
         d = t * dist
         elev = np.asarray(self.sample(lons, lats), dtype=np.float64)
-        return d, elev
+        return d, elev, lons, lats
 
 
 def _unit_vector(lon: float, lat: float) -> np.ndarray:
