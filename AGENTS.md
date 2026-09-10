@@ -67,6 +67,7 @@
 - 常用命令（均在仓库根目录执行，先 `conda activate $(cat conda_env_name)`）：
   - 运行：`uvicorn app.main:app --port 8000`（访问 http://127.0.0.1:8000）
   - 测试：`pytest`
+  - 前端自检（无头浏览器跑 `/?selftest=1` 并校验全 PASS）：`scripts/frontend_selftest.sh`（需 Chrome/Chromium，端口可用 `PVA_SELFTEST_PORT` 覆盖）
   - Lint：`ruff check app tests`
 - 依赖记录：pip 部分见 `requirements.txt`，完整 conda 环境见 `environment.yml`（GDAL 必须经 conda 安装）；新增依赖时须同步更新这两个文件。
 - 实现备注：
