@@ -74,6 +74,9 @@
 
       <section class="card" id="obs-card">
         <h2>当前生效观测点</h2>
+        <p id="obs-loading" class="spinner-row hidden" role="status" aria-live="polite">
+          <span class="spinner"></span>计算中…
+        </p>
         <p id="obs-placeholder" class="desc">尚未确认观测点</p>
         <div id="obs-data" class="lift-result hidden">
           <div class="kv"><span>坐标</span><b id="obs-coord"></b></div>
@@ -110,6 +113,7 @@
         <div class="row hidden" id="basemap-file-row">
           <input id="basemap-file" type="text" placeholder="服务器上的 GeoTIFF 底图路径">
           <button id="basemap-apply">加载</button>
+          <span id="basemap-loading" class="spinner hidden" role="status" aria-live="polite"></span>
         </div>
       </section>
 
@@ -160,6 +164,9 @@
 
       <section class="card" id="result-card">
         <h2>点选测高</h2>
+        <p id="lift-loading" class="spinner-row hidden" role="status" aria-live="polite">
+          <span class="spinner"></span>计算中…
+        </p>
         <p id="lift-hint" class="hint">先确认观测点，然后点击地图任意位置：<br>将显示该点为看见观测点所需的最小抬升高度。</p>
         <div id="lift-result" class="lift-result hidden">
           <div class="kv"><span>点击位置</span><b id="click-pos"></b></div>
@@ -174,7 +181,6 @@
         </div>
       </section>
 
-      <p id="busy" class="busy hidden">计算中…</p>
     </aside>
 
     <main id="map"></main>

@@ -104,7 +104,28 @@ button:disabled { background: #9db4e0; cursor: wait; }
   border: 1px dashed var(--err); border-radius: 6px; background: #fdf1ef; }
 
 .obs-stats { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 6px 2px 0; }
-.busy { font-size: 13px; color: var(--accent); margin: 8px 2px; }
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pva-spin 0.8s linear infinite;
+  flex: none;
+}
+.spinner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--accent);
+  margin: 2px 0;
+}
+@keyframes pva-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; border-top-color: var(--accent); opacity: 0.6; }
+}
 
 .hidden { display: none !important; }
 

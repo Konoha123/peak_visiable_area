@@ -18,7 +18,7 @@ const state = {
   lastLiftClick: null,     // 最近一次测高点击点 {lon, lat}（测高点辅助的搜索中心）
   peak: { pick: null, lift: null },      // 两工具各自最新一次搜索结果（含 center/radius_m）
   peakHintKind: { pick: "", lift: "" },  // 提示类型标记（err 时保留至下次搜索）
-  busyCount: 0,
+  busyZones: { obs: 0, lift: 0, basemap: 0 },  // 就地加载指示（三环节独立计数）
 };
 
 const $ = (id) => document.getElementById(id);
@@ -28,9 +28,19 @@ const FT_PER_M = 3.280839895;
 const MIN_DISPLAY_M = 5000;
 const R_EARTH_M = 6371000;
 
-function setBusy(on) {
-  state.busyCount = Math.max(0, state.busyCount + (on ? 1 : -1));
-  $("busy").classList.toggle("hidden", state.busyCount === 0);
+/** 就地加载指示：zone ∈ obs/lift/basemap；观测点卡片的“计算中”态由 renderObserverCard 接管。 */
+function setZoneBusy(zone, on) {
+  const next = Math.max(0, state.busyZones[zone] + (on ? 1 : -1));
+  if (next === state.busyZones[zone]) return;
+  state.busyZones[zone] = next;
+  if (zone === "obs") renderObserverCard();
+  else if (zone === "lift") updateLiftBusy();
+  else $("basemap-loading").classList.toggle("hidden", state.busyZones.basemap === 0);
+}
+
+/** 测高点击防重入门禁：观测点重算或测高进行中忽略新的测高点击。 */
+function liftClickBlocked() {
+  return state.busyZones.obs > 0 || state.busyZones.lift > 0;
 }
 
 async function api(path, body) {
@@ -107,7 +117,7 @@ async function setBasemapOffline() {
   if (state.tileLayer) { state.map.removeLayer(state.tileLayer); state.tileLayer = null; }
   const path = $("basemap-file").value.trim();
   if (!path) return;
-  setBusy(true);
+  setZoneBusy("basemap", true);
   try {
     const data = await api("/api/basemap", { path });
     const b = data.bounds;
@@ -117,7 +127,7 @@ async function setBasemapOffline() {
   } catch (err) {
     showFeedback(`底图加载失败：${err.message}`, false);
   } finally {
-    setBusy(false);
+    setZoneBusy("basemap", false);
   }
 }
 
@@ -266,9 +276,18 @@ async function onConfirm() {
 
 /* ---------------- 【当前生效观测点】卡片 ---------------- */
 
-/** 按状态机渲染卡片：错误态 ＞ 未设定占位 ＞ 成功数据（字段随 state.observer 持久化，单位切换可完整重渲染）。 */
+/** 按状态机渲染卡片：计算中 ＞ 错误态 ＞ 未设定占位 ＞ 成功数据（字段随 state.observer 持久化，单位切换可完整重渲染）。 */
 function renderObserverCard() {
+  const loading = $("obs-loading");
   const ph = $("obs-placeholder"), data = $("obs-data"), err = $("obs-error");
+  if (state.busyZones.obs > 0) {
+    loading.classList.remove("hidden");
+    ph.classList.add("hidden");
+    data.classList.add("hidden");
+    err.classList.add("hidden");
+    return;
+  }
+  loading.classList.add("hidden");
   if (state.observerError) {
     ph.classList.add("hidden");
     data.classList.add("hidden");
@@ -301,7 +320,7 @@ function renderObserverCard() {
 }
 
 async function loadObserver(lon, lat) {
-  setBusy(true);
+  setZoneBusy("obs", true);
   // 自动替换：清除旧结果（含点选测高与附近制高点搜索）
   state.overlayGroup.clearLayers();
   resetLiftPanel();
@@ -366,7 +385,7 @@ async function loadObserver(lon, lat) {
     showFeedback(err.message, false);
     updatePhaseBar();
   } finally {
-    setBusy(false);
+    setZoneBusy("obs", false);
   }
 }
 
@@ -517,13 +536,27 @@ async function onMapClick(e) {
     $("lift-hint").innerHTML = "请先在左侧确认观测点，再点击地图查询。";
     return;
   }
+  if (liftClickBlocked()) {
+    log("计算进行中，忽略新的测高点击");
+    return;
+  }
   const lon = e.latlng.lng, lat = e.latlng.lat;
   await measureLift(lon, lat);
 }
 
+/** 测高结果区的就地 spinner：计算中隐藏提示与旧结果，完成后由 measureLift 的成功/失败分支恢复。 */
+function updateLiftBusy() {
+  const busy = state.busyZones.lift > 0;
+  $("lift-loading").classList.toggle("hidden", !busy);
+  if (busy) {
+    $("lift-hint").classList.add("hidden");
+    $("lift-result").classList.add("hidden");
+  }
+}
+
 /** 点选测高管线：地图点击与“采用为测高点”共用（程序化等效点击）。 */
 async function measureLift(lon, lat) {
-  setBusy(true);
+  setZoneBusy("lift", true);
   try {
     const data = await api("/api/lift", {
       obs_lon: state.observer.lon, obs_lat: state.observer.lat,
@@ -571,7 +604,7 @@ async function measureLift(lon, lat) {
       renderProfileThumbnail(null);
     }
   } finally {
-    setBusy(false);
+    setZoneBusy("lift", false);
   }
 }
 
@@ -643,7 +676,6 @@ async function runPeakSearch(tool) {
   if (!center) return;
   const btn = $(`peak-search-${tool}`);
   btn.disabled = true;
-  setBusy(true);
   resetPeakPanels(); // 再次搜索覆盖旧结果（仅保留最新一组，含另一工具的面板与图形）
   showPeakHint(tool, "", "");
   try {
@@ -661,7 +693,6 @@ async function runPeakSearch(tool) {
     warn(`制高点搜索[${tool}]失败:`, err.message);
     showPeakHint(tool, err.message, "err");
   } finally {
-    setBusy(false);
     updatePeakTools();
   }
 }
@@ -988,9 +1019,12 @@ async function runSelfTest() {
   const origFetch = window.fetch;
   const peakCalls = { last: null };
   let stubFailHorizon = false;
+  let stubDelayMs = 0;
+  let liftCalls = 0;
   const jsonResp = (obj) => new Response(JSON.stringify(obj),
     { status: 200, headers: { "Content-Type": "application/json" } });
   window.fetch = async (path, opts) => {
+    if (stubDelayMs > 0) await new Promise((r) => setTimeout(r, stubDelayMs));
     const body = opts && opts.body ? JSON.parse(opts.body) : null;
     if (path === "/api/validate") {
       const [lonV, latV] = body.text.split(",").map((s) => parseFloat(s.trim()));
@@ -1013,11 +1047,16 @@ async function runSelfTest() {
                         visible_cells: 123, elapsed_s: 0.05, dem_source: "stub" });
     }
     if (path === "/api/lift") {
+      liftCalls += 1;
       return jsonResp({ feasible: true, lift_m: 31.4, message: null,
                         observer_elev_m: 43.5, clicked_elev_m: 800.0, distance_m: 12900.0,
                         central_angle_deg: 0.1146, refraction: "geometric",
                         profile: { dist_m: [0, 6450, 12900], elev_m: [43.5, 300, 800] },
                         geodesic: [[116.397, 39.909], [116.5, 40.0]] });
+    }
+    if (path === "/api/basemap") {
+      return jsonResp({ image: "data:image/png;base64,iVBORw0KGgo=",
+                        bounds: [115, 39, 118, 41] });
     }
     if (path === "/api/peak-search") {
       peakCalls.last = body;
@@ -1107,6 +1146,43 @@ async function runSelfTest() {
     check("失败后旧信息不残留(数据与占位均隐藏)",
           $("obs-data").classList.contains("hidden")
           && $("obs-placeholder").classList.contains("hidden"));
+    // —— 就地 spinner 与防重入门禁 ——
+    check("全局busy指示已移除", document.getElementById("busy") === null);
+    check("spinner容器具备无障碍属性",
+          $("obs-loading").getAttribute("role") === "status"
+          && $("obs-loading").getAttribute("aria-live") === "polite");
+    stubDelayMs = 300;
+    const obsRun = loadObserver(116.397, 39.909);
+    await new Promise((r) => setTimeout(r, 60));
+    check("观测点计算中卡片=spinner态",
+          !$("obs-loading").classList.contains("hidden")
+          && $("obs-data").classList.contains("hidden")
+          && $("obs-error").classList.contains("hidden"));
+    await obsRun;
+    check("观测点完成后spinner隐藏且数据恢复",
+          $("obs-loading").classList.contains("hidden")
+          && !$("obs-data").classList.contains("hidden"));
+    stubDelayMs = 300;
+    const liftRun = measureLift(116.4, 39.92);
+    await new Promise((r) => setTimeout(r, 60));
+    check("测高计算中结果区=spinner(旧结果隐藏)",
+          !$("lift-loading").classList.contains("hidden")
+          && $("lift-result").classList.contains("hidden"));
+    await onMapClick({ latlng: { lng: 116.41, lat: 39.93 } });
+    check("busy时新的测高点击被忽略", liftCalls === 1);
+    await liftRun;
+    check("测高完成后spinner隐藏", $("lift-loading").classList.contains("hidden"));
+    stubDelayMs = 0;
+    $("basemap").value = "offline";
+    $("basemap-file").value = "/tmp/stub.tif";
+    stubDelayMs = 300;
+    const bmRun = setBasemapOffline();
+    await new Promise((r) => setTimeout(r, 60));
+    check("底图加载中按钮旁=spinner", !$("basemap-loading").classList.contains("hidden"));
+    await bmRun;
+    check("底图完成后spinner隐藏", $("basemap-loading").classList.contains("hidden"));
+    $("basemap").value = "online";
+    stubDelayMs = 0;
   } finally {
     window.fetch = origFetch;
   }
@@ -1129,6 +1205,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadOptions();
     bindEvents();
+    renderObserverCard();
     updatePhaseBar();
     updatePeakTools();
     if (new URLSearchParams(location.search).has("selftest")) await runSelfTest();
