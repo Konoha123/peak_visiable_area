@@ -72,6 +72,18 @@
         </div>
       </section>
 
+      <section class="card" id="obs-card">
+        <h2>当前生效观测点</h2>
+        <p id="obs-placeholder" class="desc">尚未确认观测点</p>
+        <div id="obs-data" class="lift-result hidden">
+          <div class="kv"><span>坐标</span><b id="obs-coord"></b></div>
+          <div class="kv"><span>高程</span><b id="obs-elev"></b></div>
+          <div class="kv"><span>曲率上限半径</span><b id="obs-radius"></b></div>
+          <p id="obs-stats" class="obs-stats"></p>
+        </div>
+        <p id="obs-error" class="feedback err hidden"></p>
+      </section>
+
       <section class="card">
         <h2>设置</h2>
         <div class="row">
@@ -162,7 +174,6 @@
         </div>
       </section>
 
-      <p id="obs-info" class="obs-info"></p>
       <p id="busy" class="busy hidden">计算中…</p>
     </aside>
 

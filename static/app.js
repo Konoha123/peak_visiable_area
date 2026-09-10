@@ -2,7 +2,9 @@
 "use strict";
 
 const state = {
-  observer: null,          // {lon, lat, elevation, radius}
+  observer: null,          // {lon, lat, elevation, radius, dem_source, fallback,
+                           //  viewshed: {visible_cells, grid_shape, engine, elapsed_s}}
+  observerError: null,     // 观测点计算失败的错误信息（【当前生效观测点】卡片错误态）
   inputMode: "text",       // 'text' | 'map'（坐标输入方式，校验逻辑由其决定）
   picked: null,            // {lon, lat} 地图点选采集的观测点坐标
   map: null,
@@ -262,12 +264,49 @@ async function onConfirm() {
   }
 }
 
+/* ---------------- 【当前生效观测点】卡片 ---------------- */
+
+/** 按状态机渲染卡片：错误态 ＞ 未设定占位 ＞ 成功数据（字段随 state.observer 持久化，单位切换可完整重渲染）。 */
+function renderObserverCard() {
+  const ph = $("obs-placeholder"), data = $("obs-data"), err = $("obs-error");
+  if (state.observerError) {
+    ph.classList.add("hidden");
+    data.classList.add("hidden");
+    err.textContent = state.observerError;
+    err.classList.remove("hidden");
+    return;
+  }
+  err.classList.add("hidden");
+  if (!state.observer) {
+    ph.classList.remove("hidden");
+    data.classList.add("hidden");
+    return;
+  }
+  ph.classList.add("hidden");
+  data.classList.remove("hidden");
+  const o = state.observer;
+  $("obs-coord").textContent = fmtCoord(o.lon, o.lat);
+  $("obs-elev").textContent = o.dem_source
+    ? `${fmtHeight(o.elevation)}（DEM：${o.dem_source}）` : fmtHeight(o.elevation);
+  $("obs-radius").textContent = fmtLength(o.radius) + (o.fallback ? "（最小显示半径兜底）" : "");
+  const vs = o.viewshed;
+  if (vs && vs.visible_cells != null && Array.isArray(vs.grid_shape)) {
+    $("obs-stats").textContent =
+      `可视域：${vs.visible_cells.toLocaleString("en-US")} 格可见 / ` +
+      `格网 ${vs.grid_shape.join("×")}，引擎 ${vs.engine}，耗时 ${vs.elapsed_s}s`;
+    $("obs-stats").classList.remove("hidden");
+  } else {
+    $("obs-stats").classList.add("hidden");
+  }
+}
+
 async function loadObserver(lon, lat) {
   setBusy(true);
   // 自动替换：清除旧结果（含点选测高与附近制高点搜索）
   state.overlayGroup.clearLayers();
   resetLiftPanel();
   resetPeakPanels();
+  state.observerError = null;
 
   let source;
   try { source = demSourceConfig(); } catch (err) { showFeedback(err.message, false); return; }
@@ -275,7 +314,11 @@ async function loadObserver(lon, lat) {
   try {
     const hz = await api("/api/horizon",
       { lon, lat, refraction: refraction(), dem_source: source });
-    state.observer = { lon, lat, elevation: hz.elevation_m, radius: hz.display_radius_m };
+    state.observer = {
+      lon, lat,
+      elevation: hz.elevation_m, radius: hz.display_radius_m,
+      dem_source: hz.dem_source, fallback: hz.fallback,
+    };
     log("地平线结果: 高程=%.1fm 半径=%.1fkm 兜底=%s DEM=%s",
         hz.elevation_m, hz.display_radius_m / 1000, hz.fallback, hz.dem_source);
 
@@ -308,16 +351,17 @@ async function loadObserver(lon, lat) {
       ? `校验成功。地平线半径过小，已兜底为 ${MIN_DISPLAY_M / 1000} km`
       : "校验成功";
     showFeedback(fb, true);
-    $("obs-info").innerHTML =
-      `观测点：${fmtCoord(lon, lat)}<br>` +
-      `高程：${fmtHeight(hz.elevation_m)}（DEM：${hz.dem_source}）<br>` +
-      `曲率上限半径：${fmtLength(hz.display_radius_m)}` +
-      (hz.fallback ? "（最小显示半径兜底）" : "") + `<br>` +
-      `可视域：${vs.visible_cells.toLocaleString("en-US")} 格可见 / ` +
-      `格网 ${vs.grid_shape.join("×")}，引擎 ${vs.engine}，耗时 ${vs.elapsed_s}s`;
+    state.observer.viewshed = {
+      visible_cells: vs.visible_cells, grid_shape: vs.grid_shape,
+      engine: vs.engine, elapsed_s: vs.elapsed_s,
+    };
+    renderObserverCard();
     updatePhaseBar();
   } catch (err) {
     state.observer = null;
+    state.observerError = err.message;
+    renderObserverCard();
+    window.alert(`观测点计算失败：${err.message}`);
     warn("观测点加载失败:", err.message);
     showFeedback(err.message, false);
     updatePhaseBar();
@@ -777,12 +821,7 @@ function bindEvents() {
   $("unit").addEventListener("change", () => {
     if (state.lastLiftDisplay) renderProfileThumbnail(state.lastLiftDisplay);
     refreshPeakElevations();
-    if (state.observer) {
-      $("obs-info").innerHTML =
-        `观测点：${fmtCoord(state.observer.lon, state.observer.lat)}<br>` +
-        `高程：${fmtHeight(state.observer.elevation)}<br>` +
-        `曲率上限半径：${fmtLength(state.observer.radius)}`;
-    }
+    renderObserverCard(); // 单位切换完整重渲染（含 DEM 源名与可视域统计，不丢字段）
   });
 }
 
@@ -808,6 +847,9 @@ async function runSelfTest() {
 
   check("初始阶段=未设定观测点", $("phase-badge").textContent === "未设定观测点");
   check("初始按钮=进入地图选点", $("phase-toggle").textContent === "进入地图选点");
+  check("观测点卡片初始=未设定占位",
+        !$("obs-placeholder").classList.contains("hidden")
+        && $("obs-data").classList.contains("hidden"));
 
   $("phase-toggle").click();
   check("切换后阶段=选点中", $("phase-badge").textContent === "选点中");
@@ -945,6 +987,7 @@ async function runSelfTest() {
   // 搜索与采用链路（网络桩化）
   const origFetch = window.fetch;
   const peakCalls = { last: null };
+  let stubFailHorizon = false;
   const jsonResp = (obj) => new Response(JSON.stringify(obj),
     { status: 200, headers: { "Content-Type": "application/json" } });
   window.fetch = async (path, opts) => {
@@ -954,6 +997,10 @@ async function runSelfTest() {
       return jsonResp({ ok: true, lon: lonV, lat: latV, message: "校验成功" });
     }
     if (path === "/api/horizon") {
+      if (stubFailHorizon) {
+        return new Response(JSON.stringify({ detail: "stub 模拟 DEM 取数失败" }),
+          { status: 502, headers: { "Content-Type": "application/json" } });
+      }
       return jsonResp({ elevation_m: 43.5, horizon_radius_m: 23590, display_radius_m: 23590,
                         min_display_radius_m: 5000, fallback: false,
                         refraction: "geometric", dem_source: "stub" });
@@ -1026,12 +1073,49 @@ async function runSelfTest() {
     check("采用为观测点后观测点=候选且阶段=可测高",
           state.observer && state.observer.lon === 116.5 && state.observer.lat === 40.0
           && $("phase-badge").textContent === "可测高");
+    // —— 【当前生效观测点】卡片：成功态 / 单位切换完整重渲染 / 失败链路 ——
+    check("确认后卡片=成功态并含全字段",
+          !$("obs-data").classList.contains("hidden")
+          && $("obs-coord").textContent.includes("40.00000")
+          && $("obs-elev").textContent.includes("43.5 m")
+          && $("obs-elev").textContent.includes("stub")
+          && $("obs-radius").textContent.includes("23.6 km")
+          && !$("obs-stats").classList.contains("hidden")
+          && $("obs-stats").textContent.includes("123"));
+    $("unit").value = "ft";
+    renderObserverCard();
+    check("单位切换后卡片完整(ft且保留DEM源名与统计)",
+          $("obs-elev").textContent.includes("ft")
+          && $("obs-elev").textContent.includes("stub")
+          && $("obs-stats").textContent.includes("123"));
+    $("unit").value = "m";
+    renderObserverCard();
+    stubFailHorizon = true;
+    const alerts = [];
+    const origAlert = window.alert;
+    window.alert = (m) => alerts.push(m);
+    try {
+      await loadObserver(116.397, 39.909);
+    } finally {
+      window.alert = origAlert;
+      stubFailHorizon = false;
+    }
+    check("失败时弹窗提示错误", alerts.length === 1 && alerts[0].includes("失败"));
+    check("关闭弹窗后卡片=错误态",
+          !$("obs-error").classList.contains("hidden")
+          && $("obs-error").textContent.includes("stub 模拟"));
+    check("失败后旧信息不残留(数据与占位均隐藏)",
+          $("obs-data").classList.contains("hidden")
+          && $("obs-placeholder").classList.contains("hidden"));
   } finally {
     window.fetch = origFetch;
   }
 
   state.observer = null;
+  state.observerError = null;
+  renderObserverCard();
   updatePhaseBar();
+  check("重置后观测点卡片回占位", !$("obs-placeholder").classList.contains("hidden"));
   const pre = document.createElement("pre");
   pre.id = "selftest-results";
   pre.textContent = results.join("\n");
