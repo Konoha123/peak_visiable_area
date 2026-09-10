@@ -18,7 +18,7 @@ const state = {
   lastLiftClick: null,     // 最近一次测高点击点 {lon, lat}（测高点辅助的搜索中心）
   peak: { pick: null, lift: null },      // 两工具各自最新一次搜索结果（含 center/radius_m）
   peakHintKind: { pick: "", lift: "" },  // 提示类型标记（err 时保留至下次搜索）
-  busyZones: { obs: 0, lift: 0, basemap: 0 },  // 就地加载指示（三环节独立计数）
+  busyZones: { obs: 0, lift: 0, basemap: 0, "peak-pick": 0, "peak-lift": 0 },  // 就地加载指示（各环节独立计数）
 };
 
 const $ = (id) => document.getElementById(id);
@@ -28,14 +28,21 @@ const FT_PER_M = 3.280839895;
 const MIN_DISPLAY_M = 5000;
 const R_EARTH_M = 6371000;
 
-/** 就地加载指示：zone ∈ obs/lift/basemap；观测点卡片的“计算中”态由 renderObserverCard 接管。 */
+/** 纯元素型 zone → spinner 元素 id 映射（obs/lift 有专属状态渲染，不在此列）。 */
+const BUSY_ZONE_EL = {
+  basemap: "basemap-loading",
+  "peak-pick": "peak-loading-pick",
+  "peak-lift": "peak-loading-lift",
+};
+
+/** 就地加载指示：zone 见 busyZones；观测点卡片与测高结果区的“计算中”态由各自渲染函数接管。 */
 function setZoneBusy(zone, on) {
   const next = Math.max(0, state.busyZones[zone] + (on ? 1 : -1));
   if (next === state.busyZones[zone]) return;
   state.busyZones[zone] = next;
   if (zone === "obs") renderObserverCard();
   else if (zone === "lift") updateLiftBusy();
-  else $("basemap-loading").classList.toggle("hidden", state.busyZones.basemap === 0);
+  else $(BUSY_ZONE_EL[zone]).classList.toggle("hidden", state.busyZones[zone] === 0);
 }
 
 /** 测高点击防重入门禁：观测点重算或测高进行中忽略新的测高点击。 */
@@ -676,6 +683,8 @@ async function runPeakSearch(tool) {
   if (!center) return;
   const btn = $(`peak-search-${tool}`);
   btn.disabled = true;
+  const zone = `peak-${tool}`;
+  setZoneBusy(zone, true);
   resetPeakPanels(); // 再次搜索覆盖旧结果（仅保留最新一组，含另一工具的面板与图形）
   showPeakHint(tool, "", "");
   try {
@@ -693,6 +702,7 @@ async function runPeakSearch(tool) {
     warn(`制高点搜索[${tool}]失败:`, err.message);
     showPeakHint(tool, err.message, "err");
   } finally {
+    setZoneBusy(zone, false);
     updatePeakTools();
   }
 }
@@ -1182,6 +1192,24 @@ async function runSelfTest() {
     await bmRun;
     check("底图完成后spinner隐藏", $("basemap-loading").classList.contains("hidden"));
     $("basemap").value = "online";
+    // 制高点搜索按钮旁 spinner（两工具各自独立）
+    state.pendingText = { lon: 116.5, lat: 40.0 };
+    stubDelayMs = 300;
+    const peakRunPick = runPeakSearch("pick");
+    await new Promise((r) => setTimeout(r, 60));
+    check("制高点搜索中按钮旁=spinner(工具一)",
+          !$("peak-loading-pick").classList.contains("hidden")
+          && $("peak-loading-lift").classList.contains("hidden"));
+    await peakRunPick;
+    check("制高点搜索完成后spinner隐藏(工具一)",
+          $("peak-loading-pick").classList.contains("hidden"));
+    const peakRunLift = runPeakSearch("lift");
+    await new Promise((r) => setTimeout(r, 60));
+    check("制高点搜索中按钮旁=spinner(工具二)",
+          !$("peak-loading-lift").classList.contains("hidden"));
+    await peakRunLift;
+    check("制高点搜索完成后spinner隐藏(工具二)",
+          $("peak-loading-lift").classList.contains("hidden"));
     stubDelayMs = 0;
   } finally {
     window.fetch = origFetch;
