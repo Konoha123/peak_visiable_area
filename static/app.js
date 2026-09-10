@@ -8,9 +8,13 @@ const state = {
   map: null,
   tileLayer: null,
   overlayGroup: null,      // 曲率圆 + 可视域 + 观测点标记
+  peakGroup: null,         // 附近制高点候选 marker + 搜索范围圆（随最新结果替换）
   clickMarker: null,
   liftLine: null,          // 最近一次测高的测地线连线（仅保留最新一条）
   lastLiftDisplay: null,   // 最近一次测高的剖面显示数据（单位切换时重绘用）
+  pendingText: null,       // 文本框当前内容经即时校验得到的待确认坐标 {lon, lat}
+  peak: { pick: null, tune: null },      // 两工具各自最新一次搜索结果（含 center/radius_m）
+  peakHintKind: { pick: "", tune: "" },  // 提示类型标记（err 时保留至下次搜索）
   busyCount: 0,
 };
 
@@ -83,6 +87,7 @@ function effEarthRadiusM() {
 function initMap() {
   state.map = L.map("map", { zoomControl: true, worldCopyJump: true }).setView([35, 105], 4);
   state.overlayGroup = L.layerGroup().addTo(state.map);
+  state.peakGroup = L.layerGroup().addTo(state.map);
   setBasemapOnline();
   state.map.on("click", onMapClick);
 }
@@ -189,6 +194,8 @@ function setInputMode(mode, options = {}) {
     state.map.setMaxBounds(null);
   }
   updatePhaseBar();
+  updatePeakTools();
+  if (isText) scheduleTextValidate();
 }
 
 function onSegBtnClick(e) {
@@ -202,6 +209,7 @@ function exitPickAfterConfirm() {
   state.picked = null;
   $("picked-coord").value = "";
   setInputMode("text", { clearFeedback: false });
+  updatePeakTools();
 }
 
 function normalizeLon(lon) {
@@ -255,9 +263,10 @@ async function onConfirm() {
 
 async function loadObserver(lon, lat) {
   setBusy(true);
-  // 自动替换：清除旧结果（含点选测高）
+  // 自动替换：清除旧结果（含点选测高与附近制高点搜索）
   state.overlayGroup.clearLayers();
   resetLiftPanel();
+  resetPeakPanels();
 
   let source;
   try { source = demSourceConfig(); } catch (err) { showFeedback(err.message, false); return; }
@@ -455,6 +464,7 @@ async function onMapClick(e) {
     $("picked-coord").value = `${lon.toFixed(6)}, ${lat.toFixed(6)}`;
     log("点选观测点:", lon.toFixed(6), lat.toFixed(6));
     showFeedback(`已点选观测点：${fmtCoord(lon, lat)}，点击【确认输入】生效`, true);
+    updatePeakTools();
     return;
   }
   if (!state.observer) {
@@ -512,6 +522,162 @@ async function onMapClick(e) {
   }
 }
 
+/* ---------------- 附近制高点搜索（选点辅助 / 观测点微调辅助） ---------------- */
+
+const PEAK_TOOLS = ["pick", "tune"];
+
+/** 工具一（选点辅助）的搜索中心：点选模式=已点选坐标；文本模式=即时校验通过的文本坐标。 */
+function selectionCenter() {
+  if (state.inputMode === "map") return state.picked ? { ...state.picked } : null;
+  return state.pendingText ? { ...state.pendingText } : null;
+}
+
+function showPeakHint(tool, msg, kind) {
+  const el = $(`peak-hint-${tool}`);
+  el.textContent = msg;
+  el.className = "feedback" + (kind === "err" ? " err" : "");
+  state.peakHintKind[tool] = kind || "";
+}
+
+/** 按阶段刷新两工具可用性：选点辅助=有待确认中心；微调辅助=已确认观测点。 */
+function updatePeakTools() {
+  const hasPickCenter = !!selectionCenter();
+  $("peak-search-pick").disabled = !hasPickCenter;
+  if (!hasPickCenter) {
+    showPeakHint("pick", state.inputMode === "map"
+      ? "先在地图上点选，再搜索附近制高点"
+      : "文本框输入有效坐标后可搜索附近制高点", "");
+  } else if (state.peakHintKind.pick !== "err") {
+    showPeakHint("pick", "", "");
+  }
+  $("peak-search-tune").disabled = !state.observer;
+  if (!state.observer) {
+    showPeakHint("tune", "确认观测点后可用", "");
+  } else if (state.peakHintKind.tune !== "err") {
+    showPeakHint("tune", "", "");
+  }
+}
+
+/** 即时校验文本框坐标（与【确认输入】同一校验入口），结果供选点辅助确定中心。 */
+async function validateTextNow() {
+  if (state.inputMode !== "text") { state.pendingText = null; updatePeakTools(); return; }
+  const text = $("coord").value.trim();
+  if (!text) { state.pendingText = null; updatePeakTools(); return; }
+  try {
+    const v = await api("/api/validate", { text, format: $("fmt").value });
+    state.pendingText = v.ok ? { lon: v.lon, lat: v.lat } : null;
+  } catch (err) {
+    state.pendingText = null;
+  }
+  updatePeakTools();
+}
+
+let textValidateTimer = null;
+function scheduleTextValidate() {
+  clearTimeout(textValidateTimer);
+  textValidateTimer = setTimeout(validateTextNow, 400);
+}
+
+async function runPeakSearch(tool) {
+  const center = tool === "pick" ? selectionCenter()
+    : (state.observer ? { lon: state.observer.lon, lat: state.observer.lat } : null);
+  if (!center) return;
+  const btn = $(`peak-search-${tool}`);
+  btn.disabled = true;
+  setBusy(true);
+  resetPeakPanels(); // 再次搜索覆盖旧结果（仅保留最新一组，含另一工具的面板与图形）
+  showPeakHint(tool, "", "");
+  try {
+    const radiusM = parseFloat($(`peak-radius-${tool}`).value);
+    const res = await api("/api/peak-search", {
+      lon: center.lon, lat: center.lat, radius_m: radiusM, dem_source: demSourceConfig(),
+    });
+    state.peak[tool] = { ...res, center, radius_m: radiusM };
+    renderPeakResult(tool, state.peak[tool]);
+    drawPeakOnMap(state.peak[tool]);
+    log("制高点搜索[%s]: 中心(%.5f, %.5f) 半径=%.1fkm → 候选(%.5f, %.5f) 高程=%.1fm 距离=%.0fm 覆盖率=%.2f 中心即最高=%s",
+        tool, center.lon, center.lat, radiusM / 1000, res.lon, res.lat,
+        res.elevation_m, res.distance_m, res.coverage_ratio, res.is_center_highest);
+  } catch (err) {
+    warn(`制高点搜索[${tool}]失败:`, err.message);
+    showPeakHint(tool, err.message, "err");
+  } finally {
+    setBusy(false);
+    updatePeakTools();
+  }
+}
+
+function renderPeakResult(tool, entry) {
+  $(`peak-result-${tool}`).classList.remove("hidden");
+  $(`peak-coord-${tool}`).textContent = `${entry.lon.toFixed(6)}, ${entry.lat.toFixed(6)}`;
+  $(`peak-elev-${tool}`).textContent = fmtHeight(entry.elevation_m);
+  $(`peak-dist-${tool}`).textContent = `${(entry.distance_m / 1000).toFixed(2)} km`;
+  const note = $(`peak-note-${tool}`);
+  const adopt = $(`peak-adopt-${tool}`);
+  if (entry.is_center_highest) {
+    note.textContent = "当前点已是附近制高点";
+    note.className = "feedback ok";
+    adopt.classList.add("hidden");
+    return;
+  }
+  adopt.classList.remove("hidden");
+  if (entry.coverage_ratio < 0.5) {
+    note.textContent = `搜索范围内 DEM 覆盖不完全（约 ${Math.round(entry.coverage_ratio * 100)}%），` +
+      "结果基于有效覆盖部分";
+    note.className = "feedback warn";
+  } else {
+    note.textContent = "";
+    note.className = "feedback";
+  }
+}
+
+function drawPeakOnMap(entry) {
+  // 虚线搜索范围圆 + 候选 marker；不自动平移地图（候选超出显示范围时侧栏结果仍完整）
+  L.circle([entry.center.lat, entry.center.lon], {
+    radius: entry.radius_m, color: "#e67e22", weight: 1, dashArray: "4 4", fill: false,
+  }).addTo(state.peakGroup);
+  L.circleMarker([entry.lat, entry.lon], {
+    radius: 6, color: "#e67e22", weight: 2, fillOpacity: 0.9,
+  }).bindTooltip(`制高点候选 ${fmtCoord(entry.lon, entry.lat)}`).addTo(state.peakGroup);
+}
+
+function refreshPeakElevations() {
+  for (const tool of PEAK_TOOLS) {
+    const entry = state.peak[tool];
+    if (entry) $(`peak-elev-${tool}`).textContent = fmtHeight(entry.elevation_m);
+  }
+}
+
+/** 清除两工具结果与地图图形（更换观测点 / 采用后由确认链路触发）。 */
+function resetPeakPanels() {
+  state.peak.pick = null;
+  state.peak.tune = null;
+  if (state.peakGroup) state.peakGroup.clearLayers();
+  for (const tool of PEAK_TOOLS) {
+    $(`peak-result-${tool}`).classList.add("hidden");
+    $(`peak-note-${tool}`).textContent = "";
+  }
+  updatePeakTools();
+}
+
+/** 采用候选为观测点：以候选坐标走既有【确认输入】生效链路（不旁路直调）。 */
+async function adoptPeak(tool) {
+  const entry = state.peak[tool];
+  if (!entry || entry.is_center_highest) return;
+  const btn = $(`peak-adopt-${tool}`);
+  btn.disabled = true;
+  try {
+    if (state.inputMode === "map") setInputMode("text"); // Esc 语义退出点选模式
+    $("fmt").value = "decimal";
+    $("coord").value = `${entry.lon.toFixed(6)}, ${entry.lat.toFixed(6)}`;
+    state.pendingText = { lon: entry.lon, lat: entry.lat };
+    await onConfirm();
+  } finally {
+    btn.disabled = false;
+    updatePeakTools();
+  }
+}
+
 /* ---------------- 初始化 ---------------- */
 
 async function loadOptions() {
@@ -534,6 +700,12 @@ async function loadOptions() {
 function bindEvents() {
   $("confirm").addEventListener("click", onConfirm);
   $("coord").addEventListener("keydown", (e) => { if (e.key === "Enter") onConfirm(); });
+  $("coord").addEventListener("input", scheduleTextValidate);
+  $("fmt").addEventListener("change", scheduleTextValidate);
+  for (const tool of PEAK_TOOLS) {
+    $(`peak-search-${tool}`).addEventListener("click", () => runPeakSearch(tool));
+    $(`peak-adopt-${tool}`).addEventListener("click", () => adoptPeak(tool));
+  }
   document.querySelectorAll(".seg-btn").forEach((btn) => {
     btn.addEventListener("click", onSegBtnClick);
   });
@@ -570,6 +742,7 @@ function bindEvents() {
   });
   $("unit").addEventListener("change", () => {
     if (state.lastLiftDisplay) renderProfileThumbnail(state.lastLiftDisplay);
+    refreshPeakElevations();
     if (state.observer) {
       $("obs-info").innerHTML =
         `观测点：${fmtCoord(state.observer.lon, state.observer.lat)}<br>` +
@@ -683,6 +856,107 @@ async function runSelfTest() {
   check("重置时连线与剖面随旧结果清除",
         state.liftLine === null && $("profile-box").classList.contains("hidden"));
 
+  // —— 附近制高点搜索（选点辅助 / 观测点微调辅助） ——
+  state.observer = null;
+  state.pendingText = null;
+  updatePeakTools();
+  const pickSel = $("peak-radius-pick"), tuneSel = $("peak-radius-tune");
+  check("制高点档位=6档默认2km(选点辅助)",
+        pickSel.options.length === 6 && pickSel.value === "2000");
+  check("制高点档位=6档默认2km(微调辅助)",
+        tuneSel.options.length === 6 && tuneSel.value === "2000");
+  tuneSel.value = "5000";
+  check("两工具下拉相互独立", pickSel.value === "2000");
+  tuneSel.value = "2000";
+  check("无待确认坐标时工具一禁用", $("peak-search-pick").disabled === true);
+  check("未设定观测点时工具二禁用", $("peak-search-tune").disabled === true);
+
+  $("coord").value = "116.397, 39.909";
+  await validateTextNow();
+  check("文本即时校验通过后工具一启用", $("peak-search-pick").disabled === false);
+  state.observer = { lon: 116.397, lat: 39.909, elevation: 50, radius: 25240 };
+  updatePeakTools();
+  check("设定观测点后工具二启用", $("peak-search-tune").disabled === false);
+
+  // 结果渲染分支（直接驱动渲染函数）
+  state.peak.pick = { lon: 116.4, lat: 39.95, elevation_m: 100, distance_m: 0,
+                      coverage_ratio: 1, is_center_highest: true,
+                      center: { lon: 116.4, lat: 39.95 }, radius_m: 2000 };
+  renderPeakResult("pick", state.peak.pick);
+  check("中心即最高时提示并隐藏采用按钮",
+        $("peak-note-pick").textContent.includes("已是附近制高点")
+        && $("peak-adopt-pick").classList.contains("hidden"));
+  state.peak.pick = { lon: 116.45, lat: 39.98, elevation_m: 100, distance_m: 900,
+                      coverage_ratio: 0.3, is_center_highest: false,
+                      center: { lon: 116.4, lat: 39.95 }, radius_m: 2000 };
+  renderPeakResult("pick", state.peak.pick);
+  check("覆盖率偏低时附提示且采用按钮可见",
+        $("peak-note-pick").textContent.includes("覆盖")
+        && !$("peak-adopt-pick").classList.contains("hidden"));
+  state.peak.pick = null;
+  $("peak-result-pick").classList.add("hidden");
+
+  // 搜索与采用链路（网络桩化）
+  const origFetch = window.fetch;
+  const peakCalls = { last: null };
+  const jsonResp = (obj) => new Response(JSON.stringify(obj),
+    { status: 200, headers: { "Content-Type": "application/json" } });
+  window.fetch = async (path, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    if (path === "/api/validate") {
+      const [lonV, latV] = body.text.split(",").map((s) => parseFloat(s.trim()));
+      return jsonResp({ ok: true, lon: lonV, lat: latV, message: "校验成功" });
+    }
+    if (path === "/api/horizon") {
+      return jsonResp({ elevation_m: 43.5, horizon_radius_m: 23590, display_radius_m: 23590,
+                        min_display_radius_m: 5000, fallback: false,
+                        refraction: "geometric", dem_source: "stub" });
+    }
+    if (path === "/api/viewshed") {
+      return jsonResp({ image: "data:image/png;base64,iVBORw0KGgo=",
+                        bounds: [115.9, 39.6, 116.9, 40.2], cell_size_m: 90,
+                        grid_shape: [64, 64], radius_m: 23590, elevation_m: 43.5,
+                        engine: "angular-ray-sweep", refraction: "geometric",
+                        visible_cells: 123, elapsed_s: 0.05, dem_source: "stub" });
+    }
+    if (path === "/api/peak-search") {
+      peakCalls.last = body;
+      return jsonResp({ lon: 116.5, lat: 40.0, elevation_m: 800.0, distance_m: 12900.0,
+                        coverage_ratio: 1.0, is_center_highest: false, dem_source: "stub" });
+    }
+    return jsonResp({});
+  };
+  try {
+    await runPeakSearch("pick");
+    check("工具一请求中心=待确认坐标且半径随下拉",
+          peakCalls.last && peakCalls.last.lon === 116.397 && peakCalls.last.radius_m === 2000);
+    check("工具一结果渲染", !$("peak-result-pick").classList.contains("hidden")
+      && $("peak-coord-pick").textContent === "116.500000, 40.000000"
+      && $("peak-dist-pick").textContent === "12.90 km");
+    check("工具一范围圆与候选marker已渲染", state.peakGroup.getLayers().length === 2);
+    await runPeakSearch("tune");
+    check("工具二请求中心=已确认观测点", peakCalls.last && peakCalls.last.lon === 116.397);
+    check("再次搜索覆盖旧结果(仅保留最新一组)",
+          $("peak-result-pick").classList.contains("hidden") && state.peak.pick === null
+          && !$("peak-result-tune").classList.contains("hidden"));
+    $("unit").value = "ft";
+    refreshPeakElevations();
+    check("候选高程随米/英尺联动", $("peak-elev-tune").textContent.includes("ft"));
+    $("unit").value = "m";
+    refreshPeakElevations();
+    await adoptPeak("tune");
+    check("采用后文本框=候选坐标(十进制)", $("coord").value === "116.500000, 40.000000");
+    check("采用后观测点=候选坐标且阶段=可测高",
+          state.observer && state.observer.lon === 116.5 && state.observer.lat === 40.0
+          && $("phase-badge").textContent === "可测高");
+    check("采用后候选marker与两工具结果清除",
+          state.peak.pick === null && state.peak.tune === null
+          && state.peakGroup.getLayers().length === 0
+          && $("peak-result-tune").classList.contains("hidden"));
+  } finally {
+    window.fetch = origFetch;
+  }
+
   state.observer = null;
   updatePhaseBar();
   const pre = document.createElement("pre");
@@ -699,6 +973,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     await loadOptions();
     bindEvents();
     updatePhaseBar();
+    updatePeakTools();
     if (new URLSearchParams(location.search).has("selftest")) await runSelfTest();
   } catch (err) {
     showFeedback(`初始化失败：${err.message}`, false);

@@ -44,6 +44,58 @@
         </div>
         <p id="pick-hint" class="desc hidden">地图点选模式：点击地图采集观测点坐标（重新点选覆盖），再点击【确认输入】生效；按 Esc 退出。</p>
         <p id="feedback" class="feedback"></p>
+
+        <div class="peak-tool">
+          <div class="peak-title">选点辅助：附近制高点</div>
+          <div class="row">
+            <label for="peak-radius-pick">搜索半径</label>
+            <select id="peak-radius-pick">
+              <option value="500">0.5 km</option>
+              <option value="1000">1 km</option>
+              <option value="2000" selected>2 km</option>
+              <option value="5000">5 km</option>
+              <option value="10000">10 km</option>
+              <option value="25000">25 km</option>
+            </select>
+          </div>
+          <div class="row">
+            <button id="peak-search-pick">搜索附近制高点</button>
+          </div>
+          <p id="peak-hint-pick" class="feedback"></p>
+          <div id="peak-result-pick" class="lift-result hidden">
+            <div class="kv"><span>候选坐标</span><b id="peak-coord-pick"></b></div>
+            <div class="kv"><span>候选高程</span><b id="peak-elev-pick" class="lift-value"></b></div>
+            <div class="kv"><span>距中心</span><b id="peak-dist-pick"></b></div>
+            <p id="peak-note-pick" class="feedback"></p>
+            <div class="row"><button id="peak-adopt-pick">采用为观测点</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="peak-finetune-card">
+        <h2>观测点微调：附近制高点</h2>
+        <div class="row">
+          <label for="peak-radius-tune">搜索半径</label>
+          <select id="peak-radius-tune">
+            <option value="500">0.5 km</option>
+            <option value="1000">1 km</option>
+            <option value="2000" selected>2 km</option>
+            <option value="5000">5 km</option>
+            <option value="10000">10 km</option>
+            <option value="25000">25 km</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="peak-search-tune">搜索附近制高点</button>
+        </div>
+        <p id="peak-hint-tune" class="feedback"></p>
+        <div id="peak-result-tune" class="lift-result hidden">
+          <div class="kv"><span>候选坐标</span><b id="peak-coord-tune"></b></div>
+          <div class="kv"><span>候选高程</span><b id="peak-elev-tune" class="lift-value"></b></div>
+          <div class="kv"><span>距中心</span><b id="peak-dist-tune"></b></div>
+          <p id="peak-note-tune" class="feedback"></p>
+          <div class="row"><button id="peak-adopt-tune">采用为观测点</button></div>
+        </div>
       </section>
 
       <section class="card">
