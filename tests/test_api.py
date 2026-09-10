@@ -188,6 +188,60 @@ class TestLift:
         assert all(idx[i + 1] > idx[i] for i in range(len(idx) - 1))
 
 
+class TestPeakSearch:
+    @pytest.fixture()
+    def peak_grid_client(self, monkeypatch) -> TestClient:
+        grid = make_grid(201, 100.0)
+        grid.elevations[60, 128] = 1500.0
+        provider = StaticProvider(grid)
+        import app.api.routes as routes
+        monkeypatch.setattr(routes, "build_provider", lambda config: provider)
+        return TestClient(create_app())
+
+    def test_finds_peak(self, peak_grid_client: TestClient) -> None:
+        dlon = 100.0 / (111_320.0 * math.cos(math.radians(LAT)))
+        dlat = 100.0 / 111_320.0
+        body = peak_grid_client.post("/api/peak-search",
+                                     json={"lon": 0.0, "lat": LAT, "radius_m": 5000.0}).json()
+        # make_grid(201, 100) 几何中心＝(0, LAT)，峰值位于格点 (60, 128) 单元中心
+        assert body["lon"] == pytest.approx(-dlon * 201 / 2 + 128.5 * dlon, abs=1e-5)
+        assert body["lat"] == pytest.approx(LAT + dlat * 201 / 2 - 60.5 * dlat, abs=1e-5)
+        assert body["elevation_m"] == pytest.approx(1500.0)
+        assert body["distance_m"] == pytest.approx(math.hypot(4000.0, 2800.0), rel=0.01)
+        assert body["is_center_highest"] is False
+        assert body["coverage_ratio"] == pytest.approx(1.0, abs=0.02)
+        assert body["dem_source"] == "static-test"
+
+    def test_center_is_highest(self, monkeypatch) -> None:
+        grid = make_grid(201, 100.0)
+        grid.elevations[100, 100] = 800.0
+        import app.api.routes as routes
+        monkeypatch.setattr(routes, "build_provider", lambda config: StaticProvider(grid))
+        c = TestClient(create_app())
+        body = c.post("/api/peak-search",
+                      json={"lon": 0.0, "lat": LAT, "radius_m": 2000.0}).json()
+        assert body["is_center_highest"] is True
+        assert body["lon"] == pytest.approx(0.0, abs=1e-9)
+        assert body["lat"] == pytest.approx(LAT, abs=1e-9)
+        assert body["distance_m"] == 0.0
+
+    def test_no_valid_data_returns_502(self, monkeypatch) -> None:
+        grid = make_grid(51, 100.0)
+        grid.elevations[:] = np.nan
+        import app.api.routes as routes
+        monkeypatch.setattr(routes, "build_provider", lambda config: StaticProvider(grid))
+        c = TestClient(create_app())
+        resp = c.post("/api/peak-search", json={"lon": 0.0, "lat": LAT, "radius_m": 1000.0})
+        assert resp.status_code == 502
+        assert "无有效" in resp.json()["detail"]
+
+    def test_radius_validation(self, client: TestClient) -> None:
+        assert client.post("/api/peak-search",
+                           json={"lon": 0, "lat": 0, "radius_m": 30_000}).status_code == 422
+        assert client.post("/api/peak-search",
+                           json={"lon": 0, "lat": 0, "radius_m": 0}).status_code == 422
+
+
 def test_engine_and_source_lists(client: TestClient) -> None:
     engines = client.get("/api/engines").json()
     assert {e["id"] for e in engines} == {"angular-ray-sweep", "gdal-viewshed"}

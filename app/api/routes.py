@@ -12,6 +12,7 @@ from ..geo.coords import parse_coordinates
 from ..geo.dem import DEMError, build_provider
 from ..geo.horizon import MIN_DISPLAY_RADIUS_M, display_radius_m, horizon_radius_m
 from ..geo.lift import IMPOSSIBLE_MESSAGE, solve_min_lift
+from ..geo.peak import search_nearby_peak
 from ..geo.seamask import apply_sea_level_clamp
 from ..geo.viewshed import compute_viewshed
 from ..geo.viewshed_gdal import compute_viewshed_gdal
@@ -100,6 +101,13 @@ class LiftRequest(BaseModel):
     click_lon: float = Field(ge=-180, le=180)
     click_lat: float = Field(ge=-90, le=90)
     refraction: str = Field(default="geometric", pattern="^(geometric|standard)$")
+    dem_source: dict = Field(default_factory=lambda: {"type": "terrarium"})
+
+
+class PeakSearchRequest(BaseModel):
+    lon: float = Field(ge=-180, le=180)
+    lat: float = Field(ge=-90, le=90)
+    radius_m: float = Field(gt=0, le=25_000)
     dem_source: dict = Field(default_factory=lambda: {"type": "terrarium"})
 
 
@@ -290,4 +298,33 @@ def lift(req: LiftRequest) -> dict:
         "refraction": res.refraction,
         "profile": profile_json,
         "geodesic": geodesic_json,
+    }
+
+
+@router.post("/peak-search")
+def peak_search(req: PeakSearchRequest) -> dict:
+    logger.info("制高点搜索请求: 中心(%.5f, %.5f) 半径=%.1fkm DEM=%s",
+                req.lon, req.lat, req.radius_m / 1000, req.dem_source)
+    provider = build_provider(req.dem_source)
+    dlat = req.radius_m / 111_320.0
+    dlon = req.radius_m / (111_320.0 * math.cos(math.radians(req.lat)))
+    try:
+        grid = provider.fetch_bbox(req.lon - dlon, req.lat - dlat, req.lon + dlon, req.lat + dlat,
+                                   NEAR_CELL_M)
+        grid = apply_sea_level_clamp(grid)
+        cand = search_nearby_peak(grid, req.lon, req.lat, req.radius_m)
+    except DEMError as exc:
+        logger.warning("制高点搜索失败: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    logger.info("制高点搜索响应: 候选(%.5f, %.5f) 高程=%.1fm 距离=%.0fm 覆盖率=%.2f 中心即最高=%s",
+                cand.lon, cand.lat, cand.elevation_m, cand.distance_m, cand.coverage_ratio,
+                cand.is_center_highest)
+    return {
+        "lon": round(cand.lon, 6),
+        "lat": round(cand.lat, 6),
+        "elevation_m": cand.elevation_m,
+        "distance_m": round(cand.distance_m, 1),
+        "coverage_ratio": round(cand.coverage_ratio, 4),
+        "is_center_highest": cand.is_center_highest,
+        "dem_source": getattr(provider, "name", req.dem_source.get("type", "")),
     }
