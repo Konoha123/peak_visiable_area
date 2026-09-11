@@ -1,0 +1,14 @@
+# 打包专用环境（与开发环境 environment.yml 的区别：不含 pytest/ruff 等开发依赖）。
+# 运行时依赖统一来自仓库根 requirements.txt（单一数据源），勿在此另列 pip 包。
+# 本文件必须保持在仓库根目录：conda 对 `-r` 的相对路径按本文件所在目录解析。
+# conda 层依赖（python/gdal 版本）与 environment.yml 人工保持同步。
+# 打包流程见 docs/packaging.md。
+name: pva-dist-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - gdal>=3.9
+  - pip
+  - pip:
+      - -r requirements.txt

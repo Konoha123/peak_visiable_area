@@ -1,8 +1,9 @@
+# 运行时依赖（开发与打包环境共用，经两个 environment*.yml 以 `-r requirements.txt` 引用）。
+# 注意：此处只放运行时依赖；开发/测试工具（pytest、ruff 等）写入 environment.yml，
+# 以保证打包环境（environment-dist.yml）不携带开发依赖。
 fastapi>=0.141
 uvicorn[standard]>=0.52
 numpy>=2.0
 pillow>=10.0
 requests>=2.31
 httpx>=0.27
-pytest>=8.0
-ruff>=0.6

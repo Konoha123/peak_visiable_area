@@ -7,3 +7,5 @@ dependencies:
   - pip
   - pip:
       - -r requirements.txt
+      - pytest>=8
+      - ruff>=0.6

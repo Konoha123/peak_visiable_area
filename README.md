@@ -65,7 +65,11 @@
 
 - Python 开发环境（conda）名称记录于 [`conda_env_name`](conda_env_name) 文件中：
   - `peak-visiable-area-dev-env`
-- 依赖：pip 部分见 `requirements.txt`；GDAL 须经 conda 安装（完整环境见 `environment.yml`）。
+- 依赖（三分结构）：
+  - `requirements.txt`＝运行时依赖单一数据源（开发与打包环境共用）；
+  - `environment.yml`＝开发环境（引用 requirements.txt，另含 pytest/ruff 等开发工具）；
+  - `environment-dist.yml`＝打包环境（引用 requirements.txt，不含开发工具）。
+  - GDAL 须经 conda 安装。新增运行时依赖只改 `requirements.txt`，两个环境自动继承。
 
 ## 运行
 
@@ -77,6 +81,14 @@ uvicorn app.main:app --port 8000
 
 - 首次在线计算会拉取 DEM 瓦片并缓存到 `~/.cache/pva/`，大半径场景首次耗时约 20–60 s，此后秒级。
 - 测试：`pytest`；Lint：`ruff check app tests`。
+
+## 打包
+
+打包为免安装、双击即用的发行包（conda-pack 方案，用户机无需 Python/conda）：
+
+- 打包指南：[`docs/packaging.md`](docs/packaging.md)
+- 用户使用说明（随发行包分发）：[`docs/user-guide.md`](docs/user-guide.md)
+- 启动脚本（随发行包分发）：[`packaging/run.bat`](packaging/run.bat) / [`packaging/run.command`](packaging/run.command) / [`packaging/run.sh`](packaging/run.sh)
 
 ## 项目状态
 

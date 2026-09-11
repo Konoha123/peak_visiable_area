@@ -75,6 +75,7 @@
 - **conda 环境名**：`peak-visiable-area-dev-env`
   - 该名称以仓库根目录的 `conda_env_name` 文件为准，如不一致以文件内容为准。
   - 激活方式：`conda activate $(cat conda_env_name)`
+- **其他 conda 环境**：`pva-dist-env`（打包环境，由 `environment-dist.yml` 创建）、`pva-pack-tools`（conda-pack 工具环境）——均由 `docs/packaging.md` 流程按需创建/移除，不属于日常开发环境。
 - 语言：Python；后端框架 FastAPI，前端 Leaflet（具体依赖清单待开发时确定并记录）
 - **宿主系统**（2026-09 检测）：Ubuntu 24.04.4 LTS（x86_64，内核 6.8）；X11 桌面会话（DISPLAY 可用），已装 Firefox 与 Google Chrome；12 核 CPU / 15 GB 内存；无可用 NVIDIA GPU；外网连通（PyPI、npm registry、OSM 瓦片、AWS 高程瓦片均可达）；Node v16 存在但 npm 缺失（前端可采用 CDN 免构建方案规避）。项目 conda 环境当前无地理/GUI 相关包。
 
@@ -86,7 +87,18 @@
   - 测试：`pytest`
   - 前端自检（无头浏览器跑 `/?selftest=1` 并校验全 PASS）：`scripts/frontend_selftest.sh`（需 Chrome/Chromium，端口可用 `PVA_SELFTEST_PORT` 覆盖）
   - Lint：`ruff check app tests`
-- 依赖记录：pip 部分见 `requirements.txt`，完整 conda 环境见 `environment.yml`（GDAL 必须经 conda 安装）；新增依赖时须同步更新这两个文件。
+  - 打包：见 `docs/packaging.md`（产物为免安装发行包，含双击启动脚本）
+- 依赖记录（2026-09 起三分结构，隐含约束较多，逐条遵守）：
+  - `requirements.txt`＝**运行时依赖单一数据源**（fastapi/uvicorn/numpy/pillow/requests/httpx），由 `environment.yml`（开发环境）与 `environment-dist.yml`（打包环境）经 `-r requirements.txt` 共同引用。
+  - **新增依赖优先用 pip**：运行时依赖只改 `requirements.txt`，两个环境自动继承——这是本结构的隐含要求；把运行时依赖写进某个 yml 的 conda 段会造成两环境分叉、需人工双写同步。conda 段仅保留**必须经 conda 安装**的包（当前仅 GDAL）与 python 版本，此二者变更时须两 yml 手动同步。
+  - **开发/测试工具（pytest、ruff 等）只进 `environment.yml`**，`requirements.txt` 禁止出现开发依赖（否则会漏进发行包）。
+  - `environment-dist.yml` **必须保持在仓库根目录**：conda 对 `-r` 的相对路径按该文件所在目录解析，移位即失效。
+  - 运行时代码不得 import 开发依赖（发行环境不装它们）。
+- 打包（2026-09 新增，完整流程见 `docs/packaging.md`，Linux 端已实测通过）：
+  - 产物＝conda-pack 环境快照 + `app/` + `static/` + `packaging/run.{bat,command,sh}` 启动脚本 + `docs/user-guide.md`（复制为发行包内 `使用说明.md`，勿在包内单独维护副本）。
+  - 启动脚本固化了应用启动形态（`app.main:app` 入口、`static/` 布局、端口策略 8000–8009、日志文件 `pva-server.log`、GDAL/PROJ 数据路径注入），**这些约定变更时必须同步改 `packaging/run.*`**。
+  - conda-pack 必须以 `conda run -n pva-pack-tools conda-pack ...`（连字符二进制）调用；若 base 残留旧版 conda-pack，`conda pack` 子命令会分派到旧版并误报环境不一致（报错路径呈 `lib/python3.1/...` 截断特征）。真实不一致时重建环境，勿在不一致环境上 `conda remove` 局部修补（实测会触发解算器破坏性卸载）。
+  - 归档：Windows 目标用 zip（.bat 不需可执行位），macOS/Linux 目标用 tar.gz（保留 +x）；`python -m zipfile` 实测不保留可执行位，禁用。
 - 实现备注：
   - DEM 在线源为 AWS Terrain Tiles（terrarium 编码），拼接后重采样为均匀纬度格网（墨卡托行距非均匀，直接线性配准在大范围会引入数公里偏差）。
   - GDAL 3.13 实测缺陷：绑定 `ViewshedGenerate` 位置参数错位、`gdal_viewshed` 的 `-cc` 曲率系数失效、`-md` 误杀近距离格点；GDAL 引擎采用“子进程 + 曲率预烘焙 + 自管半径”绕开，复杂地形下结果可能偏保守。
